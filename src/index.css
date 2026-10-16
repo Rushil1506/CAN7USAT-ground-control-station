@@ -1,0 +1,124 @@
+@import "tailwindcss";
+@import "leaflet/dist/leaflet.css";
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700;800&display=swap');
+
+@layer base {
+  body {
+    background-color: #0b0e14;
+    color: #e1e2eb;
+    font-family: 'Inter', sans-serif;
+    overflow-x: hidden;
+  }
+
+  /* Monospace font utility for data telemetry */
+  .font-mono-data {
+    font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  }
+}
+
+/* Pulse animation for active telemetry link indicator */
+@keyframes pulse-green {
+  0% {
+    box-shadow: 0 0 0 0 rgba(56, 250, 135, 0.7);
+  }
+  70% {
+    box-shadow: 0 0 0 6px rgba(56, 250, 135, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(56, 250, 135, 0);
+  }
+}
+
+.active-link-indicator {
+  animation: pulse-green 2s infinite;
+}
+
+@keyframes pulse-amber {
+  0% {
+    box-shadow: 0 0 0 0 rgba(255, 176, 0, 0.8);
+  }
+  70% {
+    box-shadow: 0 0 0 8px rgba(255, 176, 0, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(255, 176, 0, 0);
+  }
+}
+
+.active-amber-pulse {
+  animation: pulse-amber 1.8s infinite;
+}
+
+/* Telemetry panel base card styling */
+.telemetry-panel {
+  background-color: #161b22;
+  border: 1px solid #2a2e35;
+  position: relative;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.telemetry-panel:hover {
+  border-color: #3f4550;
+}
+
+/* Panel top-border accent accents */
+.panel-amber-accent {
+  border-top: 2px solid #ffd597 !important;
+}
+
+.panel-blue-accent {
+  border-top: 2px solid #98cbff !important;
+}
+
+.panel-gray-accent {
+  border-top: 2px solid #9f8e78 !important;
+}
+
+.panel-green-accent {
+  border-top: 2px solid #38fa87 !important;
+}
+
+.panel-red-accent {
+  border-top: 2px solid #ffb4ab !important;
+}
+
+/* Primary GO Button backlit inner glow */
+.go-button {
+  box-shadow: inset 0 0 3px 0px rgba(255, 176, 0, 0.8);
+  transition: all 0.2s ease;
+}
+
+.go-button:hover {
+  box-shadow: inset 0 0 10px 1px rgba(255, 176, 0, 0.9), 0 0 12px rgba(255, 176, 0, 0.4);
+}
+
+.go-button:active {
+  box-shadow: inset 0 0 14px 3px rgba(255, 176, 0, 1);
+  transform: scale(0.98);
+}
+
+/* Dot matrix flight state background pattern */
+.dot-matrix-bg {
+  background-image: radial-gradient(rgba(255, 255, 255, 0.12) 1px, transparent 1px);
+  background-size: 16px 16px;
+}
+
+/* Custom dark scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: #0b0e14;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #272a31;
+  border-radius: 0px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #524533;
+}
+

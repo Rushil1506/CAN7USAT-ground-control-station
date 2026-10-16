@@ -1,0 +1,8 @@
+{
+  "name": "CANSAT Ground Control Station",
+  "description": "Avionics mission control dashboard with real-time 6-DOF telemetry, 3D orientation, flight state machine, and GPS trajectory tracking.",
+  "requestFramePermissions": [
+    "geolocation"
+  ],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
