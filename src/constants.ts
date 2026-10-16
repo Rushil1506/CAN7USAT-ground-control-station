@@ -89,19 +89,19 @@ export const AVAILABLE_PORTS = [
 export const BAUD_RATES = [9600, 19200, 38400, 57600, 115200];
 
 export const COLOR_TOKENS = {
-  bgLowest: '#0B0E14',
-  bgSurface: '#10131A',
-  surfaceContainer: '#1D2026',
-  surfaceHigh: '#272A31',
-  amberPrimary: '#FFD597',
-  amberGo: '#FFB000',
-  blueSecondary: '#98CBFF',
-  greenNominal: '#38FA87',
-  redAlert: '#FFB4AB',
-  outline: '#9F8E78',
-  outlineVariant: '#524533',
-  textOnSurface: '#E1E2EB',
-  textVariant: '#D7C4AC',
+  bgLowest: '#090D12',
+  bgSurface: '#0E141B',
+  surfaceContainer: '#161E28',
+  surfaceHigh: '#1D2633',
+  amberPrimary: '#E5A93C',
+  amberGo: '#E5A93C',
+  blueSecondary: '#388BFD',
+  greenNominal: '#28C76F',
+  redAlert: '#EA5455',
+  outline: '#324254',
+  outlineVariant: '#222C38',
+  textOnSurface: '#F0F4F8',
+  textVariant: '#8A99AD',
 };
 
 // Manipal Institute of Technology, MAHE, Manipal, Karnataka, India

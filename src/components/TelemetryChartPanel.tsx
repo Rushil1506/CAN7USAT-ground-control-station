@@ -255,6 +255,7 @@ export const TelemetryChartPanel: React.FC<TelemetryChartPanelProps> = ({ histor
     co2: 412.0,
     pm2_5: 11.5,
     uv: 4.2,
+    humidity: 58.0,
     batteryVoltage: 7.85,
     currentDraw: 2.45,
     power: 19.2,
