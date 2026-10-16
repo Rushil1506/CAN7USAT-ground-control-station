@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
-import { RotateCcw, Compass, Eye } from 'lucide-react';
+import { RotateCcw, Compass, Eye, ShieldAlert } from 'lucide-react';
 import { TelemetryPacket } from '../types';
 
 interface ThreeAttitudeViewportProps {
@@ -13,9 +13,19 @@ export const ThreeAttitudeViewport: React.FC<ThreeAttitudeViewportProps> = ({ la
   const [wireframeMode, setWireframeMode] = useState<boolean>(false);
   const [manualControl, setManualControl] = useState<boolean>(false);
 
-  const roll = latestPacket?.roll ?? 12.0;
-  const pitch = latestPacket?.pitch ?? -4.0;
-  const yaw = latestPacket?.yaw ?? 0.0;
+  // Validate orientation telemetry from packet
+  const hasAttitudeData =
+    latestPacket !== null &&
+    typeof latestPacket.roll === 'number' &&
+    typeof latestPacket.pitch === 'number' &&
+    typeof latestPacket.yaw === 'number' &&
+    !isNaN(latestPacket.roll) &&
+    !isNaN(latestPacket.pitch) &&
+    !isNaN(latestPacket.yaw);
+
+  const roll = hasAttitudeData ? latestPacket!.roll : 0;
+  const pitch = hasAttitudeData ? latestPacket!.pitch : 0;
+  const yaw = hasAttitudeData ? latestPacket!.yaw : 0;
 
   useEffect(() => {
     const mount = mountRef.current;
@@ -26,31 +36,31 @@ export const ThreeAttitudeViewport: React.FC<ThreeAttitudeViewportProps> = ({ la
 
     // 1. Scene, Camera, Renderer
     const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x0b0e14);
+    scene.background = new THREE.Color(0x090d12);
 
     const camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 1000);
-    camera.position.set(0, 2.5, 6);
+    camera.position.set(0, 2.4, 5.8);
     camera.lookAt(0, 0, 0);
 
-    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: 'low-power' });
     renderer.setSize(width, height);
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
     mount.appendChild(renderer.domElement);
 
-    // 2. Lights
-    const ambientLight = new THREE.AmbientLight(0xffffff, 0.8);
+    // 2. Controlled Aerospace Studio Lighting
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.7);
     scene.add(ambientLight);
 
-    const dirLight1 = new THREE.DirectionalLight(0x98cbff, 1.5);
-    dirLight1.position.set(5, 10, 7);
-    scene.add(dirLight1);
+    const keyLight = new THREE.DirectionalLight(0xe1e8f0, 1.2);
+    keyLight.position.set(5, 8, 6);
+    scene.add(keyLight);
 
-    const dirLight2 = new THREE.DirectionalLight(0xffd597, 1.0);
-    dirLight2.position.set(-5, -5, -5);
-    scene.add(dirLight2);
+    const fillLight = new THREE.DirectionalLight(0x56657a, 0.6);
+    fillLight.position.set(-5, -4, -4);
+    scene.add(fillLight);
 
-    // 3. Grid Helper & Axis Indicators
-    const grid = new THREE.GridHelper(10, 20, 0x524533, 0x272a31);
+    // 3. Coordinate Ground Plane Grid (Subtle aeronautical reference)
+    const grid = new THREE.GridHelper(10, 20, 0x222c38, 0x161e28);
     grid.position.y = -1.8;
     scene.add(grid);
 
@@ -59,61 +69,69 @@ export const ThreeAttitudeViewport: React.FC<ThreeAttitudeViewportProps> = ({ la
     satelliteGroupRef.current = cansatGroup;
     scene.add(cansatGroup);
 
-    // CanSat Body Cylinder
-    const bodyGeo = new THREE.CylinderGeometry(0.8, 0.8, 2.2, 16);
+    // Array to track all allocated Three.js resources for complete cleanup on unmount
+    const disposables: { dispose: () => void }[] = [];
+
+    // Main CanSat Chassis Cylinder (Cylinder aligned along Y in Three.js geometry)
+    const bodyGeo = new THREE.CylinderGeometry(0.78, 0.78, 2.2, 24);
     const bodyMat = new THREE.MeshStandardMaterial({
-      color: 0x1d2026,
-      metalness: 0.8,
-      roughness: 0.2,
+      color: 0x161e28,
+      metalness: 0.6,
+      roughness: 0.35,
       wireframe: wireframeMode,
     });
     const bodyMesh = new THREE.Mesh(bodyGeo, bodyMat);
     cansatGroup.add(bodyMesh);
+    disposables.push(bodyGeo, bodyMat);
 
-    // Solar Panel Stripes
-    const stripGeo = new THREE.CylinderGeometry(0.81, 0.81, 0.4, 16);
+    // Photovoltaic Solar Cell Rings
+    const stripGeo = new THREE.CylinderGeometry(0.79, 0.79, 0.38, 24);
     const stripMat = new THREE.MeshStandardMaterial({
-      color: 0x00a2fd,
-      emissive: 0x003558,
-      metalness: 0.9,
-      roughness: 0.1,
+      color: 0x1c3d5a,
+      roughness: 0.2,
+      metalness: 0.8,
     });
     const stripMesh1 = new THREE.Mesh(stripGeo, stripMat);
-    stripMesh1.position.y = 0.5;
+    stripMesh1.position.y = 0.52;
     cansatGroup.add(stripMesh1);
 
     const stripMesh2 = new THREE.Mesh(stripGeo, stripMat);
-    stripMesh2.position.y = -0.5;
+    stripMesh2.position.y = -0.52;
     cansatGroup.add(stripMesh2);
+    disposables.push(stripGeo, stripMat);
 
-    // Antenna Wire
-    const antennaGeo = new THREE.CylinderGeometry(0.02, 0.02, 1.2, 8);
-    const antennaMat = new THREE.MeshBasicMaterial({ color: 0xffd597 });
+    // Telemetry Antenna Whip
+    const antennaGeo = new THREE.CylinderGeometry(0.018, 0.018, 1.1, 8);
+    const antennaMat = new THREE.MeshBasicMaterial({ color: 0xe5a93c });
     const antennaMesh = new THREE.Mesh(antennaGeo, antennaMat);
-    antennaMesh.position.set(0, 1.7, 0);
+    antennaMesh.position.set(0, 1.65, 0);
     cansatGroup.add(antennaMesh);
+    disposables.push(antennaGeo, antennaMat);
 
-    // Parachute Mount Ring
-    const ringGeo = new THREE.TorusGeometry(0.85, 0.03, 8, 24);
-    const ringMat = new THREE.MeshBasicMaterial({ color: 0x38fa87 });
+    // Parachute Reefing Harness Ring
+    const ringGeo = new THREE.TorusGeometry(0.82, 0.025, 8, 24);
+    const ringMat = new THREE.MeshBasicMaterial({ color: 0x28c76f });
     const ringMesh = new THREE.Mesh(ringGeo, ringMat);
     ringMesh.rotation.x = Math.PI / 2;
     ringMesh.position.y = 1.1;
     cansatGroup.add(ringMesh);
+    disposables.push(ringGeo, ringMat);
 
-    // Camera Lens Eye
-    const lensGeo = new THREE.SphereGeometry(0.15, 12, 12);
-    const lensMat = new THREE.MeshStandardMaterial({ color: 0xff3b30, roughness: 0.1 });
+    // Nadir Camera Optical Port
+    const lensGeo = new THREE.SphereGeometry(0.12, 12, 12);
+    const lensMat = new THREE.MeshStandardMaterial({ color: 0x388bfd, roughness: 0.1 });
     const lensMesh = new THREE.Mesh(lensGeo, lensMat);
-    lensMesh.position.set(0, 0, 0.82);
+    lensMesh.position.set(0, 0, 0.8);
     cansatGroup.add(lensMesh);
+    disposables.push(lensGeo, lensMat);
 
-    // 3D Axis Indicators (X - Roll Amber/Red, Y - Pitch Green, Z - Yaw Blue)
-    const axesHelper = new THREE.AxesHelper(1.8);
-    // Custom axis colors
-    (axesHelper.material as THREE.Material).transparent = true;
-    (axesHelper.material as THREE.Material).opacity = 0.8;
+    // 3D Body Axes Helper (X - Red Pitch, Y - Green Yaw/Spin axis, Z - Blue Roll)
+    const axesHelper = new THREE.AxesHelper(1.6);
     cansatGroup.add(axesHelper);
+    if (axesHelper.material instanceof THREE.Material) {
+      disposables.push(axesHelper.material);
+    }
+    disposables.push(axesHelper.geometry);
 
     // Mouse Drag Orbit Controls
     let isDragging = false;
@@ -145,18 +163,20 @@ export const ThreeAttitudeViewport: React.FC<ThreeAttitudeViewportProps> = ({ la
     window.addEventListener('mousemove', onMouseMove);
     window.addEventListener('mouseup', onMouseUp);
 
-    // Animation Loop
+    // Animation & Render Loop
     let animationFrameId: number;
     const animate = () => {
       animationFrameId = requestAnimationFrame(animate);
 
-      // Apply telemetry orientation if not manually dragging
-      if (satelliteGroupRef.current && !isDragging) {
-        // Convert Euler degrees to radians
+      // Coordinate Convention:
+      // radPitch -> X-axis rotation
+      // radYaw   -> Y-axis rotation
+      // radRoll  -> Z-axis rotation
+      // Order: 'XYZ'
+      if (satelliteGroupRef.current && !isDragging && hasAttitudeData) {
         const radRoll = THREE.MathUtils.degToRad(roll);
         const radPitch = THREE.MathUtils.degToRad(pitch);
         const radYaw = THREE.MathUtils.degToRad(yaw);
-
         satelliteGroupRef.current.rotation.set(radPitch, radYaw, radRoll, 'XYZ');
       }
 
@@ -165,68 +185,86 @@ export const ThreeAttitudeViewport: React.FC<ThreeAttitudeViewportProps> = ({ la
 
     animate();
 
-    // Resize Handler
-    const handleResize = () => {
+    // Container Resize Observer
+    const resizeObserver = new ResizeObserver(() => {
       if (!mount) return;
       const w = mount.clientWidth;
       const h = mount.clientHeight;
+      if (w === 0 || h === 0) return;
       camera.aspect = w / h;
       camera.updateProjectionMatrix();
       renderer.setSize(w, h);
-    };
+    });
+    resizeObserver.observe(mount);
 
-    window.addEventListener('resize', handleResize);
-
+    // Comprehensive Resource Disposal on Unmount
     return () => {
-      window.removeEventListener('resize', handleResize);
+      resizeObserver.disconnect();
       cancelAnimationFrame(animationFrameId);
+
       domElement.removeEventListener('mousedown', onMouseDown);
       window.removeEventListener('mousemove', onMouseMove);
       window.removeEventListener('mouseup', onMouseUp);
 
+      disposables.forEach((resource) => {
+        try {
+          resource.dispose();
+        } catch {
+          // ignore
+        }
+      });
+
+      scene.clear();
+      renderer.dispose();
+
       if (mount && renderer.domElement) {
         mount.removeChild(renderer.domElement);
       }
-      renderer.dispose();
     };
   }, [wireframeMode]);
 
-  // Update rotation on telemetry packet change
+  // Synchronize orientation updates when telemetry packet changes
   useEffect(() => {
-    if (satelliteGroupRef.current && !manualControl) {
+    if (satelliteGroupRef.current && !manualControl && hasAttitudeData) {
       const radRoll = THREE.MathUtils.degToRad(roll);
       const radPitch = THREE.MathUtils.degToRad(pitch);
       const radYaw = THREE.MathUtils.degToRad(yaw);
       satelliteGroupRef.current.rotation.set(radPitch, radYaw, radRoll, 'XYZ');
     }
-  }, [roll, pitch, yaw, manualControl]);
+  }, [roll, pitch, yaw, manualControl, hasAttitudeData]);
 
   return (
-    <div className="telemetry-panel panel-blue-accent flex flex-col h-full select-none overflow-hidden group">
-      {/* Panel Header */}
-      <div className="p-2 sm:p-2.5 bg-[#10131A] border-b border-[#272A31] flex justify-between items-center">
+    <div className="bg-[var(--bg-surface-1)] border border-[var(--border-subtle)] rounded-[var(--radius-md)] flex flex-col h-full select-none overflow-hidden relative">
+      {/* Header Bar */}
+      <div className="p-2 sm:p-2.5 bg-[var(--bg-surface-1)] border-b border-[var(--border-subtle)] flex justify-between items-center z-10 shrink-0">
         <div className="flex items-center gap-2">
-          <Compass className="w-3.5 h-3.5 text-[#98CBFF]" />
-          <span className="font-mono-data text-xs font-bold text-[#D7C4AC] uppercase tracking-wider">
-            ATTITUDE / 6-DOF
+          <Compass className="w-3.5 h-3.5 text-[var(--status-info)]" />
+          <span className="font-mono-data text-xs font-bold text-[var(--text-primary)] uppercase tracking-tight">
+            ATTITUDE / 6-DOF VIEWPORT
+          </span>
+          <span className="hidden sm:inline-block font-mono-data text-[9px] px-1.5 py-0.2 bg-[var(--bg-surface-2)] text-[var(--status-info)] border border-[var(--border-subtle)] rounded-[var(--radius-xs)]">
+            SIMULATED BNO055
           </span>
         </div>
 
         <div className="flex items-center gap-1 font-mono-data text-[10px]">
           <button
             onClick={() => setWireframeMode(!wireframeMode)}
-            title="Toggle Wireframe Mode"
-            className={`px-1.5 py-0.5 border cursor-pointer ${
-              wireframeMode ? 'bg-[#98CBFF] text-[#001D33] border-[#98CBFF]' : 'bg-[#1D2026] text-[#9F8E78] border-[#2A2E35]'
+            title="Toggle Chassis Wireframe Mode"
+            className={`px-1.5 py-0.5 border cursor-pointer rounded-[var(--radius-xs)] transition-colors ${
+              wireframeMode
+                ? 'bg-[var(--bg-surface-elevated)] text-[var(--status-info)] border-[var(--status-info)] font-bold'
+                : 'bg-[var(--bg-surface-2)] text-[var(--text-secondary)] border-[var(--border-subtle)] hover:text-[var(--text-primary)]'
             }`}
           >
             <Eye className="w-3 h-3 inline mr-1" />
             WF
           </button>
+
           <button
             onClick={() => setManualControl(false)}
             title="Reset to Live Telemetry Orientation"
-            className="px-1.5 py-0.5 bg-[#1D2026] text-[#9F8E78] hover:text-[#98CBFF] border border-[#2A2E35] cursor-pointer"
+            className="px-1.5 py-0.5 bg-[var(--bg-surface-2)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] border border-[var(--border-subtle)] cursor-pointer rounded-[var(--radius-xs)] transition-colors"
           >
             <RotateCcw className="w-3 h-3 inline mr-1" />
             RESET
@@ -234,33 +272,57 @@ export const ThreeAttitudeViewport: React.FC<ThreeAttitudeViewportProps> = ({ la
         </div>
       </div>
 
-      {/* 3D WebGL Canvas Area */}
-      <div className="flex-1 relative bg-[#0B0E14] min-h-[180px]">
+      {/* 3D WebGL Canvas Viewport Area */}
+      <div className="flex-1 relative bg-[var(--bg-base)] min-h-[180px]">
         <div ref={mountRef} className="w-full h-full cursor-grab active:cursor-grabbing" />
 
-        {/* Tactical Crosshair Watermark */}
-        <div className="absolute inset-0 pointer-events-none border border-[#272A31]/30 m-2 flex items-center justify-center">
-          <div className="w-12 h-12 border border-[#98CBFF]/10 rounded-full flex items-center justify-center">
-            <div className="w-2 h-2 bg-[#98CBFF]/30 rounded-full"></div>
+        {/* Unavailable State Overlay */}
+        {!hasAttitudeData && (
+          <div className="absolute inset-0 bg-[#090D12]/75 backdrop-blur-xs flex items-center justify-center p-4 z-20 pointer-events-none">
+            <div className="bg-[var(--bg-surface-1)] border border-[var(--border-focus)] px-3 py-2 text-center rounded-[var(--radius-md)] shadow-lg space-y-1">
+              <div className="flex items-center justify-center gap-1.5 text-[var(--status-alert)] font-mono-data text-xs font-bold">
+                <ShieldAlert className="w-4 h-4" />
+                <span>ATTITUDE DATA UNAVAILABLE</span>
+              </div>
+              <p className="text-[10px] text-[var(--text-secondary)] font-mono-data">
+                Awaiting valid roll, pitch, and yaw telemetry from BNO055 IMU stream.
+              </p>
+            </div>
+          </div>
+        )}
+
+        {/* Axis Reference Legend - Top Right */}
+        <div className="absolute top-2 right-2 bg-[var(--bg-surface-1)]/90 border border-[var(--border-subtle)] px-2 py-1 font-mono-data text-[9px] text-[var(--text-secondary)] flex flex-col gap-0.5 pointer-events-none rounded-[var(--radius-xs)] backdrop-blur-xs">
+          <div className="flex items-center gap-1.5">
+            <span className="w-2 h-0.5 bg-[#EA5455]"></span>
+            <span>X: Pitch (Tilt)</span>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <span className="w-2 h-0.5 bg-[#28C76F]"></span>
+            <span>Y: Yaw (Spin)</span>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <span className="w-2 h-0.5 bg-[#388BFD]"></span>
+            <span>Z: Roll (Bank)</span>
           </div>
         </div>
 
-        {/* Telemetry Angle Readout Overlay */}
-        <div className="absolute bottom-2 left-2 right-2 flex justify-between items-center bg-[#10131A]/85 backdrop-blur-sm border border-[#2A2E35] px-2.5 py-1 font-mono-data text-xs text-[#98CBFF]">
+        {/* Telemetry Angle Readout Overlay Bar - Bottom */}
+        <div className="absolute bottom-2 left-2 right-2 flex justify-between items-center bg-[var(--bg-surface-1)]/90 backdrop-blur-xs border border-[var(--border-subtle)] px-2.5 py-1 font-mono-data text-xs text-[var(--text-secondary)] rounded-[var(--radius-xs)]">
           <div className="flex gap-3">
             <span>
-              R: <strong className="text-[#FFD597]">{roll >= 0 ? `+${roll}` : roll}°</strong>
+              P (X): <strong className="text-[#EA5455] tabular-nums">{hasAttitudeData ? (pitch >= 0 ? `+${pitch.toFixed(1)}` : pitch.toFixed(1)) : '--'}°</strong>
             </span>
             <span>
-              P: <strong className="text-[#98CBFF]">{pitch >= 0 ? `+${pitch}` : pitch}°</strong>
+              Y (Y): <strong className="text-[#28C76F] tabular-nums">{hasAttitudeData ? (yaw >= 0 ? `+${yaw.toFixed(1)}` : yaw.toFixed(1)) : '--'}°</strong>
             </span>
             <span>
-              Y: <strong className="text-[#38FA87]">{yaw >= 0 ? `+${yaw}` : yaw}°</strong>
+              R (Z): <strong className="text-[#388BFD] tabular-nums">{hasAttitudeData ? (roll >= 0 ? `+${roll.toFixed(1)}` : roll.toFixed(1)) : '--'}°</strong>
             </span>
           </div>
 
-          <span className="text-[10px] text-[#9F8E78] hidden sm:inline uppercase">
-            {manualControl ? 'MANUAL DRAG' : 'LIVE TELEMETRY'}
+          <span className="text-[10px] text-[var(--text-tertiary)] hidden sm:inline uppercase font-medium">
+            {manualControl ? 'MANUAL ORBIT DRAG' : (hasAttitudeData ? 'SIMULATED BNO055 STREAM' : 'STANDBY')}
           </span>
         </div>
       </div>

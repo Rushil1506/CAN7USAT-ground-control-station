@@ -13,12 +13,20 @@ interface SingleGraphProps {
   currentValue: number;
   dataKey: keyof TelemetryPacket;
   color: string;
-  accentClass: string;
   icon: React.ReactNode;
   history: TelemetryPacket[];
   timeframeSeconds: number;
   thresholdValue?: number;
   thresholdLabel?: string;
+}
+
+// Convert 6-character hex color to RGBA string
+function hexToRgba(hex: string, alpha: number): string {
+  const cleanHex = hex.replace('#', '');
+  const r = parseInt(cleanHex.substring(0, 2), 16) || 0;
+  const g = parseInt(cleanHex.substring(2, 4), 16) || 0;
+  const b = parseInt(cleanHex.substring(4, 6), 16) || 0;
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 }
 
 const SingleGraph: React.FC<SingleGraphProps> = ({
@@ -27,7 +35,6 @@ const SingleGraph: React.FC<SingleGraphProps> = ({
   currentValue,
   dataKey,
   color,
-  accentClass,
   icon,
   history,
   timeframeSeconds,
@@ -38,7 +45,7 @@ const SingleGraph: React.FC<SingleGraphProps> = ({
   const [hoverData, setHoverData] = useState<{ time: string; val: number; x: number; y: number } | null>(null);
   const [isPaused, setIsPaused] = useState(false);
 
-  // Calculate statistics
+  // Calculate statistics from the active timeframe buffer
   const recentSlice = history.slice(-Math.max(10, timeframeSeconds * 10));
   const values = recentSlice.map((p) => Number(p[dataKey]) || 0);
   const maxVal = values.length > 0 ? Math.max(...values) : currentValue;
@@ -53,28 +60,29 @@ const SingleGraph: React.FC<SingleGraphProps> = ({
     if (!ctx) return;
 
     const rect = canvas.getBoundingClientRect();
-    const width = (canvas.width = rect.width * window.devicePixelRatio);
-    const height = (canvas.height = rect.height * window.devicePixelRatio);
+    const dpr = window.devicePixelRatio || 1;
+    const width = (canvas.width = rect.width * dpr);
+    const height = (canvas.height = rect.height * dpr);
 
     ctx.clearRect(0, 0, width, height);
 
     if (recentSlice.length < 2) return;
 
-    // Draw background grid
-    ctx.strokeStyle = '#272A31';
-    ctx.lineWidth = 1 * window.devicePixelRatio;
+    // 1. Subtle Background Grid (4 divisions)
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.05)';
+    ctx.lineWidth = 1 * dpr;
     const gridRows = 4;
     for (let i = 1; i < gridRows; i++) {
       const y = (height / gridRows) * i;
       ctx.beginPath();
-      ctx.setLineDash([4 * window.devicePixelRatio, 4 * window.devicePixelRatio]);
+      ctx.setLineDash([3 * dpr, 3 * dpr]);
       ctx.moveTo(0, y);
       ctx.lineTo(width, y);
       ctx.stroke();
     }
     ctx.setLineDash([]);
 
-    // Compute Y range
+    // 2. Compute Dynamic Y Range with Threshold and 15% Padding
     let yMin = Math.min(...values);
     let yMax = Math.max(...values);
     if (thresholdValue !== undefined) {
@@ -92,30 +100,28 @@ const SingleGraph: React.FC<SingleGraphProps> = ({
     const getX = (idx: number) => (idx / (recentSlice.length - 1)) * width;
     const getY = (val: number) => height - ((val - yMin) / (yMax - yMin)) * height;
 
-    // Draw threshold line if specified (e.g. 600m disreefing or 12000 RPM)
+    // 3. Draw Threshold Line if Specified
     if (thresholdValue !== undefined) {
       const thresholdY = getY(thresholdValue);
       ctx.beginPath();
-      ctx.setLineDash([6 * window.devicePixelRatio, 4 * window.devicePixelRatio]);
+      ctx.setLineDash([5 * dpr, 4 * dpr]);
       ctx.moveTo(0, thresholdY);
       ctx.lineTo(width, thresholdY);
-      ctx.strokeStyle = '#FF5252';
-      ctx.lineWidth = 1.5 * window.devicePixelRatio;
+      ctx.strokeStyle = 'rgba(234, 84, 85, 0.75)'; // Restrained fault/warning red
+      ctx.lineWidth = 1.2 * dpr;
       ctx.stroke();
       ctx.setLineDash([]);
     }
 
-    // Draw area fill gradient
+    // 4. Draw Area Fill (Restrained 6% opacity fading to 0%)
     const gradient = ctx.createLinearGradient(0, 0, 0, height);
-    gradient.addColorStop(0, color + '40'); // 25% opacity
-    gradient.addColorStop(1, color + '00'); // 0% opacity
+    gradient.addColorStop(0, hexToRgba(color, 0.06));
+    gradient.addColorStop(1, hexToRgba(color, 0.00));
 
     ctx.beginPath();
     ctx.moveTo(getX(0), getY(values[0]));
     for (let i = 1; i < values.length; i++) {
-      const x = getX(i);
-      const y = getY(values[i]);
-      ctx.lineTo(x, y);
+      ctx.lineTo(getX(i), getY(values[i]));
     }
     ctx.lineTo(width, height);
     ctx.lineTo(0, height);
@@ -123,32 +129,30 @@ const SingleGraph: React.FC<SingleGraphProps> = ({
     ctx.fillStyle = gradient;
     ctx.fill();
 
-    // Draw line path
+    // 5. Draw Primary Telemetry Trace Line
     ctx.beginPath();
     ctx.moveTo(getX(0), getY(values[0]));
     for (let i = 1; i < values.length; i++) {
-      const x = getX(i);
-      const y = getY(values[i]);
-      ctx.lineTo(x, y);
+      ctx.lineTo(getX(i), getY(values[i]));
     }
     ctx.strokeStyle = color;
-    ctx.lineWidth = 2.5 * window.devicePixelRatio;
+    ctx.lineWidth = 2 * dpr;
     ctx.lineJoin = 'round';
     ctx.stroke();
 
-    // Highlight latest point
+    // 6. Highlight Latest Real-time Point Marker
     const lastX = getX(values.length - 1);
     const lastY = getY(values[values.length - 1]);
 
     ctx.beginPath();
-    ctx.arc(lastX, lastY, 4 * window.devicePixelRatio, 0, Math.PI * 2);
+    ctx.arc(lastX, lastY, 3 * dpr, 0, Math.PI * 2);
     ctx.fillStyle = color;
     ctx.fill();
 
     ctx.beginPath();
-    ctx.arc(lastX, lastY, 7 * window.devicePixelRatio, 0, Math.PI * 2);
+    ctx.arc(lastX, lastY, 5.5 * dpr, 0, Math.PI * 2);
     ctx.strokeStyle = color;
-    ctx.lineWidth = 1.5 * window.devicePixelRatio;
+    ctx.lineWidth = 1 * dpr;
     ctx.stroke();
   }, [history, isPaused, timeframeSeconds, color, dataKey, thresholdValue]);
 
@@ -173,46 +177,56 @@ const SingleGraph: React.FC<SingleGraphProps> = ({
   };
 
   return (
-    <div className={`telemetry-panel ${accentClass} p-3 sm:p-3.5 flex flex-col justify-between select-none group h-full`}>
+    <div className="bg-[var(--bg-surface-1)] border border-[var(--border-subtle)] hover:border-[var(--border-focus)] transition-colors rounded-[var(--radius-md)] p-2.5 sm:p-3 flex flex-col justify-between select-none group h-full">
       {/* Header Info */}
       <div className="flex justify-between items-center mb-1">
         <div className="flex items-center gap-2">
-          <span className="font-mono-data text-xs font-bold text-[#D7C4AC] uppercase tracking-wider">
-            {title} ({unit})
+          <div className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: color }} />
+          <span className="font-mono-data text-xs font-semibold text-[var(--text-secondary)] tracking-tight">
+            {title}
+          </span>
+          <span className="text-[10px] text-[var(--text-tertiary)] font-mono-data">
+            ({unit})
           </span>
           {thresholdLabel && (
-            <span className="font-mono-data text-[9px] text-[#FF5252] border border-[#FF5252]/40 px-1 bg-[#1D2026]">
+            <span className="font-mono-data text-[9px] text-[var(--status-alert)] border border-[var(--status-alert)]/30 px-1 py-0.2 bg-[var(--status-alert-bg)] rounded-[var(--radius-xs)]">
               {thresholdLabel}
             </span>
           )}
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1.5">
+          {isPaused && (
+            <span className="font-mono-data text-[9px] text-[var(--status-warning)] bg-[var(--status-warning-bg)] border border-[var(--status-warning)]/30 px-1 py-0.2 rounded-[var(--radius-xs)]">
+              PAUSED
+            </span>
+          )}
           <button
             onClick={() => setIsPaused(!isPaused)}
-            title={isPaused ? 'Resume Chart' : 'Pause Chart'}
-            className="text-[#9F8E78] hover:text-[#FFD597] transition-colors p-0.5 cursor-pointer"
+            title={isPaused ? 'Resume live chart' : 'Pause chart updates'}
+            aria-label={isPaused ? 'Resume live chart' : 'Pause chart updates'}
+            className="text-[var(--text-tertiary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-surface-2)] p-1 rounded-[var(--radius-xs)] transition-colors cursor-pointer"
           >
-            {isPaused ? <Play className="w-3.5 h-3.5" /> : <Pause className="w-3.5 h-3.5" />}
+            {isPaused ? <Play className="w-3 h-3 text-[var(--status-nominal)]" /> : <Pause className="w-3 h-3" />}
           </button>
-          <div className="text-[#9F8E78] opacity-70 group-hover:opacity-100 transition-opacity">
+          <div className="text-[var(--text-tertiary)] group-hover:text-[var(--text-secondary)] transition-colors">
             {icon}
           </div>
         </div>
       </div>
 
-      {/* Numerical Telemetry Readout */}
+      {/* Numerical Telemetry Readout with Tabular Numerals */}
       <div className="flex items-baseline justify-between my-1">
-        <div className="font-mono-data text-2xl sm:text-3xl lg:text-4xl font-extrabold tracking-tight" style={{ color }}>
+        <div className="font-mono-data text-2xl sm:text-3xl font-bold tracking-tight tabular-nums" style={{ color }}>
           {currentValue.toFixed(1)}
         </div>
-        <div className="text-right font-mono-data text-[10px] text-[#9F8E78]">
-          <div>MAX: {maxVal.toFixed(1)}</div>
-          <div>MIN: {minVal.toFixed(1)}</div>
+        <div className="text-right font-mono-data text-[10px] text-[var(--text-tertiary)] tabular-nums space-y-0.5">
+          <div>MAX: <span className="text-[var(--text-secondary)] font-medium">{maxVal.toFixed(1)}</span></div>
+          <div>MIN: <span className="text-[var(--text-secondary)] font-medium">{minVal.toFixed(1)}</span></div>
         </div>
       </div>
 
       {/* Real-time Canvas Graph View */}
-      <div className="relative w-full h-24 sm:h-28 mt-1 overflow-hidden bg-[#0B0E14]/40 border border-[#272A31]">
+      <div className="relative w-full h-24 sm:h-28 mt-1 overflow-hidden bg-[var(--bg-base)] border border-[var(--border-muted)] rounded-[var(--radius-xs)]">
         <canvas
           ref={canvasRef}
           onMouseMove={handleMouseMove}
@@ -223,13 +237,13 @@ const SingleGraph: React.FC<SingleGraphProps> = ({
         {/* Hover Crosshair Overlay */}
         {hoverData && (
           <div
-            className="absolute z-10 pointer-events-none bg-[#1D2026]/95 border border-[#FFD597] px-2 py-1 text-[11px] font-mono-data text-[#E1E2EB] shadow-lg"
+            className="absolute z-10 pointer-events-none bg-[var(--bg-surface-elevated)] border border-[var(--border-focus)] px-2 py-1 text-[11px] font-mono-data text-[var(--text-primary)] shadow-md rounded-[var(--radius-xs)] tabular-nums"
             style={{
               left: Math.min(hoverData.x + 10, 160),
               top: Math.max(hoverData.y - 30, 5),
             }}
           >
-            <div className="text-[#9F8E78] text-[9px]">{hoverData.time}</div>
+            <div className="text-[var(--text-tertiary)] text-[9px]">{hoverData.time}</div>
             <div className="font-bold" style={{ color }}>
               {hoverData.val.toFixed(2)} {unit}
             </div>
@@ -265,35 +279,35 @@ export const TelemetryChartPanel: React.FC<TelemetryChartPanelProps> = ({ histor
   return (
     <div className="flex flex-col h-full gap-1">
       {/* Timeframe & Chart Category Toolbar */}
-      <div className="flex justify-between items-center px-2.5 py-1.5 bg-[#10131A] border-b border-[#2A2E35] flex-wrap gap-2">
+      <div className="flex justify-between items-center px-2.5 py-1.5 bg-[var(--bg-surface-1)] border border-[var(--border-subtle)] rounded-[var(--radius-md)] flex-wrap gap-2">
         {/* Preset Selector */}
         <div className="flex items-center gap-1 font-mono-data text-[10px]">
           <button
             onClick={() => setActivePrimaryPreset('PRIMARY')}
-            className={`px-2 py-0.5 border cursor-pointer font-bold ${
+            className={`px-2 py-0.5 border cursor-pointer font-semibold rounded-[var(--radius-xs)] transition-colors ${
               activePreset === 'PRIMARY'
-                ? 'bg-[#FFD597] text-[#000] border-[#FFD597]'
-                : 'bg-[#161B22] text-[#9F8E78] border-[#2A2E35] hover:text-[#E1E2EB]'
+                ? 'bg-[var(--bg-surface-elevated)] text-[var(--action-amber)] border-[var(--border-amber)]'
+                : 'bg-[var(--bg-surface-2)] text-[var(--text-secondary)] border-[var(--border-subtle)] hover:text-[var(--text-primary)]'
             }`}
           >
             PRIMARY METRICS
           </button>
           <button
             onClick={() => setActivePrimaryPreset('STABILIZATION')}
-            className={`px-2 py-0.5 border cursor-pointer font-bold ${
+            className={`px-2 py-0.5 border cursor-pointer font-semibold rounded-[var(--radius-xs)] transition-colors ${
               activePreset === 'STABILIZATION'
-                ? 'bg-[#38FA87] text-[#000] border-[#38FA87]'
-                : 'bg-[#161B22] text-[#9F8E78] border-[#2A2E35] hover:text-[#E1E2EB]'
+                ? 'bg-[var(--bg-surface-elevated)] text-[var(--status-nominal)] border-[var(--border-nominal)]'
+                : 'bg-[var(--bg-surface-2)] text-[var(--text-secondary)] border-[var(--border-subtle)] hover:text-[var(--text-primary)]'
             }`}
           >
             DCS & POWER
           </button>
           <button
             onClick={() => setActivePrimaryPreset('ENVIRONMENTAL')}
-            className={`px-2 py-0.5 border cursor-pointer font-bold ${
+            className={`px-2 py-0.5 border cursor-pointer font-semibold rounded-[var(--radius-xs)] transition-colors ${
               activePreset === 'ENVIRONMENTAL'
-                ? 'bg-[#00A2FD] text-[#000] border-[#00A2FD]'
-                : 'bg-[#161B22] text-[#9F8E78] border-[#2A2E35] hover:text-[#E1E2EB]'
+                ? 'bg-[var(--bg-surface-elevated)] text-[var(--status-info)] border-[var(--status-info)]'
+                : 'bg-[var(--bg-surface-2)] text-[var(--text-secondary)] border-[var(--border-subtle)] hover:text-[var(--text-primary)]'
             }`}
           >
             ENVIRONMENTAL BONUS
@@ -302,15 +316,15 @@ export const TelemetryChartPanel: React.FC<TelemetryChartPanelProps> = ({ histor
 
         {/* Timeframe Duration Selector */}
         <div className="flex items-center gap-1 font-mono-data text-[10px]">
-          <span className="text-[#9F8E78] mr-1">TIMEFRAME:</span>
+          <span className="text-[var(--text-tertiary)] mr-1">WINDOW:</span>
           {[10, 30, 60, 120].map((sec) => (
             <button
               key={sec}
               onClick={() => setTimeframe(sec)}
-              className={`px-2 py-0.5 border cursor-pointer ${
+              className={`px-2 py-0.5 border cursor-pointer rounded-[var(--radius-xs)] tabular-nums transition-colors ${
                 timeframe === sec
-                  ? 'bg-[#272A31] text-[#FFD597] border-[#FFD597]'
-                  : 'bg-[#161B22] text-[#9F8E78] border-[#2A2E35] hover:text-[#E1E2EB]'
+                  ? 'bg-[var(--bg-surface-elevated)] text-[var(--action-amber)] border-[var(--border-amber)] font-bold'
+                  : 'bg-[var(--bg-surface-2)] text-[var(--text-secondary)] border-[var(--border-subtle)] hover:text-[var(--text-primary)]'
               }`}
             >
               {sec}s
@@ -321,16 +335,15 @@ export const TelemetryChartPanel: React.FC<TelemetryChartPanelProps> = ({ histor
 
       {/* 2x2 Telemetry Graph Grid based on Active Category */}
       {activePreset === 'PRIMARY' && (
-        <div className="grid grid-cols-1 sm:grid-cols-2 grid-rows-2 gap-1 flex-1 h-full min-h-[380px]">
+        <div className="grid grid-cols-1 sm:grid-cols-2 grid-rows-2 gap-1.5 flex-1 h-full min-h-[380px]">
           {/* 1. Altitude */}
           <SingleGraph
             title="BAROMETRIC ALTITUDE"
             unit="m"
             currentValue={currentPacket.altitude}
             dataKey="altitude"
-            color="#FFD597"
-            accentClass="panel-amber-accent"
-            icon={<PlaneTakeoff className="w-4 h-4 text-[#FFD597]" />}
+            color="#E5A93C"
+            icon={<PlaneTakeoff className="w-3.5 h-3.5 text-[#E5A93C]" />}
             history={history}
             timeframeSeconds={timeframe}
             thresholdValue={600}
@@ -343,9 +356,8 @@ export const TelemetryChartPanel: React.FC<TelemetryChartPanelProps> = ({ histor
             unit="m/s"
             currentValue={currentPacket.velocity}
             dataKey="velocity"
-            color="#98CBFF"
-            accentClass="panel-blue-accent"
-            icon={<Gauge className="w-4 h-4 text-[#98CBFF]" />}
+            color="#388BFD"
+            icon={<Gauge className="w-3.5 h-3.5 text-[#388BFD]" />}
             history={history}
             timeframeSeconds={timeframe}
             thresholdValue={17}
@@ -358,9 +370,8 @@ export const TelemetryChartPanel: React.FC<TelemetryChartPanelProps> = ({ histor
             unit="G"
             currentValue={currentPacket.acceleration}
             dataKey="acceleration"
-            color="#D7C4AC"
-            accentClass="panel-gray-accent"
-            icon={<Activity className="w-4 h-4 text-[#D7C4AC]" />}
+            color="#8A99AD"
+            icon={<Activity className="w-3.5 h-3.5 text-[#8A99AD]" />}
             history={history}
             timeframeSeconds={timeframe}
             thresholdValue={15}
@@ -373,9 +384,8 @@ export const TelemetryChartPanel: React.FC<TelemetryChartPanelProps> = ({ histor
             unit="deg/s"
             currentValue={currentPacket.spinRate}
             dataKey="spinRate"
-            color="#38FA87"
-            accentClass="panel-green-accent"
-            icon={<RotateCw className="w-4 h-4 text-[#38FA87]" />}
+            color="#28C76F"
+            icon={<RotateCw className="w-3.5 h-3.5 text-[#28C76F]" />}
             history={history}
             timeframeSeconds={timeframe}
             thresholdValue={3.18}
@@ -385,16 +395,15 @@ export const TelemetryChartPanel: React.FC<TelemetryChartPanelProps> = ({ histor
       )}
 
       {activePreset === 'STABILIZATION' && (
-        <div className="grid grid-cols-1 sm:grid-cols-2 grid-rows-2 gap-1 flex-1 h-full min-h-[380px]">
+        <div className="grid grid-cols-1 sm:grid-cols-2 grid-rows-2 gap-1.5 flex-1 h-full min-h-[380px]">
           {/* 1. Momentum Wheel RPM */}
           <SingleGraph
             title="MOMENTUM WHEEL SPEED"
             unit="RPM"
             currentValue={currentPacket.wheelRpm}
             dataKey="wheelRpm"
-            color="#38FA87"
-            accentClass="panel-green-accent"
-            icon={<RotateCw className="w-4 h-4 text-[#38FA87]" />}
+            color="#28C76F"
+            icon={<RotateCw className="w-3.5 h-3.5 text-[#28C76F]" />}
             history={history}
             timeframeSeconds={timeframe}
             thresholdValue={12000}
@@ -407,9 +416,8 @@ export const TelemetryChartPanel: React.FC<TelemetryChartPanelProps> = ({ histor
             unit="A"
             currentValue={currentPacket.currentDraw}
             dataKey="currentDraw"
-            color="#FFD597"
-            accentClass="panel-amber-accent"
-            icon={<Zap className="w-4 h-4 text-[#FFD597]" />}
+            color="#E5A93C"
+            icon={<Zap className="w-3.5 h-3.5 text-[#E5A93C]" />}
             history={history}
             timeframeSeconds={timeframe}
           />
@@ -420,9 +428,8 @@ export const TelemetryChartPanel: React.FC<TelemetryChartPanelProps> = ({ histor
             unit="V"
             currentValue={currentPacket.batteryVoltage}
             dataKey="batteryVoltage"
-            color="#00A2FD"
-            accentClass="panel-blue-accent"
-            icon={<Zap className="w-4 h-4 text-[#00A2FD]" />}
+            color="#388BFD"
+            icon={<Zap className="w-3.5 h-3.5 text-[#388BFD]" />}
             history={history}
             timeframeSeconds={timeframe}
             thresholdValue={6.4}
@@ -435,9 +442,8 @@ export const TelemetryChartPanel: React.FC<TelemetryChartPanelProps> = ({ histor
             unit="W"
             currentValue={currentPacket.power}
             dataKey="power"
-            color="#D7C4AC"
-            accentClass="panel-gray-accent"
-            icon={<Cpu className="w-4 h-4 text-[#D7C4AC]" />}
+            color="#8A99AD"
+            icon={<Cpu className="w-3.5 h-3.5 text-[#8A99AD]" />}
             history={history}
             timeframeSeconds={timeframe}
           />
@@ -445,16 +451,15 @@ export const TelemetryChartPanel: React.FC<TelemetryChartPanelProps> = ({ histor
       )}
 
       {activePreset === 'ENVIRONMENTAL' && (
-        <div className="grid grid-cols-1 sm:grid-cols-2 grid-rows-2 gap-1 flex-1 h-full min-h-[380px]">
+        <div className="grid grid-cols-1 sm:grid-cols-2 grid-rows-2 gap-1.5 flex-1 h-full min-h-[380px]">
           {/* 1. CO2 */}
           <SingleGraph
             title="SCD40 CO₂ CONCENTRATION"
             unit="ppm"
             currentValue={currentPacket.co2}
             dataKey="co2"
-            color="#38FA87"
-            accentClass="panel-green-accent"
-            icon={<Sparkles className="w-4 h-4 text-[#38FA87]" />}
+            color="#28C76F"
+            icon={<Sparkles className="w-3.5 h-3.5 text-[#28C76F]" />}
             history={history}
             timeframeSeconds={timeframe}
           />
@@ -465,9 +470,8 @@ export const TelemetryChartPanel: React.FC<TelemetryChartPanelProps> = ({ histor
             unit="µg/m³"
             currentValue={currentPacket.pm2_5}
             dataKey="pm2_5"
-            color="#00A2FD"
-            accentClass="panel-blue-accent"
-            icon={<Wind className="w-4 h-4 text-[#00A2FD]" />}
+            color="#388BFD"
+            icon={<Wind className="w-3.5 h-3.5 text-[#388BFD]" />}
             history={history}
             timeframeSeconds={timeframe}
           />
@@ -478,9 +482,8 @@ export const TelemetryChartPanel: React.FC<TelemetryChartPanelProps> = ({ histor
             unit="Index"
             currentValue={currentPacket.uv}
             dataKey="uv"
-            color="#FFD597"
-            accentClass="panel-amber-accent"
-            icon={<Sparkles className="w-4 h-4 text-[#FFD597]" />}
+            color="#E5A93C"
+            icon={<Sparkles className="w-3.5 h-3.5 text-[#E5A93C]" />}
             history={history}
             timeframeSeconds={timeframe}
           />
@@ -491,9 +494,8 @@ export const TelemetryChartPanel: React.FC<TelemetryChartPanelProps> = ({ histor
             unit="%RH"
             currentValue={currentPacket.humidity}
             dataKey="humidity"
-            color="#98CBFF"
-            accentClass="panel-blue-accent"
-            icon={<Wind className="w-4 h-4 text-[#98CBFF]" />}
+            color="#388BFD"
+            icon={<Wind className="w-3.5 h-3.5 text-[#388BFD]" />}
             history={history}
             timeframeSeconds={timeframe}
           />

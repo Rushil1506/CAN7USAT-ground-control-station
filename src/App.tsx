@@ -88,24 +88,27 @@ export default function App() {
   const handleCalibrateSensors = () => {
     handleSendCommand(`CMD,${TEAM_INFO.id},CALIBRATE,1`);
     setTimeout(() => {
-      addLog(`[${TEAM_INFO.id}_ACK] IMU Zeroed successfully. Pitch/Roll & MS5611 Baro calibrated.`, 'rx');
+      addLog(`[SIM_ACK] (${TEAM_INFO.id}) Simulated IMU zero & MS5611 baro calibration applied locally (no hardware OBC link).`, 'rx');
     }, 800);
   };
 
   const handleInjectTurbulence = () => {
     globalTelemetryEngine.injectDisturbance(1.5);
-    addLog('[TEST_ENV] Disturbance impulse injected: 1.5G pitch/roll aerodynamic disturbance', 'sys');
+    addLog('[SIM_ENV] Disturbance impulse injected: 1.5G pitch/roll aerodynamic disturbance (local simulator)', 'sys');
   };
 
   const handleOverrideState = (state: FlightStateCode | null) => {
     globalTelemetryEngine.setStateOverride(state);
-    addLog(`[SYSTEM] Manual flight software state forced to: ${state !== null ? FlightStateCode[state] : 'AUTO (PHYSICS)'}`, 'sys');
+    addLog(`[SIM_FSW] Simulated flight software state set to: ${state !== null ? FlightStateCode[state] : 'AUTO (SIM TIMELINE)'}`, 'sys');
   };
 
   const handleToggleConnect = () => {
     setSerialConfig((prev) => {
       const nextConn = !prev.connected;
-      addLog(`[SERIAL] Port ${prev.port} ${nextConn ? 'CONNECTED @ 115200 BAUD' : 'DISCONNECTED'}`, 'sys');
+      addLog(
+        `[SIM_LINK] Simulated stream (${prev.port}) ${nextConn ? `RESUMED @ ${prev.baudRate} 8N1 profile` : 'PAUSED'} — no physical serial connection`,
+        'sys'
+      );
       if (!nextConn) {
         globalTelemetryEngine.pause();
         setIsRunning(false);
@@ -121,7 +124,7 @@ export default function App() {
     addLog(cmd, 'tx');
     setSerialConfig((prev) => ({ ...prev, txCount: prev.txCount + 1 }));
     setTimeout(() => {
-      addLog(`[${TEAM_INFO.id}_ACK] Telecommand '${cmd.split(',')[2] || cmd}' received & parsed by OBC.`, 'rx');
+      addLog(`[SIM_ACK] (${TEAM_INFO.id}) Command '${cmd.split(',')[2] || cmd}' processed by local simulator (no RF hardware transmission).`, 'rx');
     }, 400);
   };
 
@@ -142,7 +145,7 @@ export default function App() {
   };
 
   return (
-    <div className="bg-[#0B0E14] text-[#E1E2EB] font-body-md h-screen flex flex-col overflow-hidden select-none">
+    <div className="bg-[var(--bg-base)] text-[var(--text-primary)] h-screen flex flex-col overflow-hidden select-none">
       {/* Top Header Bar */}
       <HeaderBar
         activeTab={activeTab}
@@ -156,26 +159,26 @@ export default function App() {
       />
 
       {/* Main Dashboard Workspace Content Area */}
-      <main className="flex-1 mt-16 p-1 bg-[#524533]/30 overflow-hidden h-[calc(100vh-4rem)]">
+      <main className="flex-1 mt-14 p-1.5 bg-[var(--bg-base)] overflow-y-auto lg:overflow-hidden h-[calc(100vh-3.5rem)]">
         {/* TAB 1: MISSION CONTROL (Full Dashboard Console) */}
         {activeTab === 'MISSION' && (
-          <div className="flex flex-col lg:flex-row gap-1 h-full overflow-hidden">
+          <div className="flex flex-col lg:flex-row gap-1.5 h-full overflow-y-auto lg:overflow-hidden">
             {/* Left & Center Main Column */}
-            <div className="flex-1 flex flex-col gap-1 overflow-hidden h-full">
+            <div className="flex-1 flex flex-col gap-1.5 overflow-hidden min-h-[540px] lg:min-h-0 lg:h-full">
               {/* 2x2 Telemetry Graph Grid (Top 58% height) */}
               <div className="h-[58%] min-h-[300px]">
                 <TelemetryChartPanel history={historyPackets} latestPacket={latestPacket} />
               </div>
 
               {/* Spatial Row (3D Orientation + GPS Map) (Bottom 42% height) */}
-              <div className="h-[42%] grid grid-cols-1 sm:grid-cols-2 gap-1 min-h-[220px]">
+              <div className="h-[42%] grid grid-cols-1 sm:grid-cols-2 gap-1.5 min-h-[220px]">
                 <ThreeAttitudeViewport latestPacket={latestPacket} />
                 <GpsTrackingMap latestPacket={latestPacket} historyPackets={historyPackets} />
               </div>
             </div>
 
-            {/* Right Sidebar Column (320px fixed width on desktop) */}
-            <div className="w-full lg:w-80 flex flex-col gap-1 overflow-y-auto lg:overflow-hidden h-full">
+            {/* Right Sidebar Column (320px fixed width on desktop, smoothly scrollable on small vertical displays) */}
+            <div className="w-full lg:w-80 flex flex-col gap-1.5 overflow-y-auto h-full pr-0.5">
               <SerialLinkPanel
                 config={serialConfig}
                 onUpdateConfig={(cfg) => setSerialConfig((prev) => ({ ...prev, ...cfg }))}
@@ -202,7 +205,7 @@ export default function App() {
 
         {/* TAB 2: TELEMETRY CHARTS & EXPANDED METRICS */}
         {activeTab === 'TELEMETRY' && (
-          <div className="h-full w-full p-1 bg-[#10131A] flex flex-col gap-1">
+          <div className="h-full w-full p-1 bg-[var(--bg-base)] flex flex-col gap-1">
             <div className="flex-1">
               <TelemetryChartPanel history={historyPackets} latestPacket={latestPacket} />
             </div>
@@ -211,7 +214,7 @@ export default function App() {
 
         {/* TAB 3: GPS MAP & SATELLITE TRACKING */}
         {activeTab === 'GPS_MAP' && (
-          <div className="h-full w-full p-1 bg-[#10131A] grid grid-cols-1 lg:grid-cols-3 gap-1">
+          <div className="h-full w-full p-1 bg-[var(--bg-base)] grid grid-cols-1 lg:grid-cols-3 gap-1.5">
             <div className="lg:col-span-2 h-full min-h-[350px]">
               <GpsTrackingMap latestPacket={latestPacket} historyPackets={historyPackets} />
             </div>

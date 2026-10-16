@@ -1,8 +1,8 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import L from 'leaflet';
-import { MapPin, Navigation, Crosshair, ZoomIn, ZoomOut, Satellite, Target, ArrowDown, Locate, ShieldAlert, Edit3, Check, RefreshCw } from 'lucide-react';
+import { MapPin, Navigation, Crosshair, ZoomIn, ZoomOut, Satellite, Target, ShieldAlert, Edit3, Check, X, Compass, Radio } from 'lucide-react';
 import { TelemetryPacket } from '../types';
-import { globalTelemetryEngine } from '../services/telemetrySimulator';
+import { BASE_GPS } from '../constants';
 
 interface GpsTrackingMapProps {
   latestPacket: TelemetryPacket | null;
@@ -19,295 +19,70 @@ export const GpsTrackingMap: React.FC<GpsTrackingMapProps> = ({
   const mapRef = useRef<L.Map | null>(null);
   const tileLayerRef = useRef<L.TileLayer | null>(null);
   const canSatMarkerRef = useRef<L.Marker | null>(null);
+  const targetMarkerRef = useRef<L.Marker | null>(null);
   const gsMarkerRef = useRef<L.Marker | null>(null);
-  const userMarkerRef = useRef<L.Marker | null>(null);
-  const userAccuracyCircleRef = useRef<L.Circle | null>(null);
   const polylineRef = useRef<L.Polyline | null>(null);
-  const clickPopupRef = useRef<L.Popup | null>(null);
+  const targetVectorRef = useRef<L.Polyline | null>(null);
 
   const [followVehicle, setFollowVehicle] = useState<boolean>(true);
-  const [mapType, setMapType] = useState<'satellite' | 'dark' | 'osm'>('satellite');
-  const [userLocation, setUserLocation] = useState<{ lat: number; lng: number; accuracy?: number } | null>(null);
+  const [mapType, setMapType] = useState<'osm' | 'satellite' | 'dark'>('osm');
+  const [showTargetModal, setShowTargetModal] = useState<boolean>(false);
   const [geoError, setGeoError] = useState<string | null>(null);
-  const [isLocating, setIsLocating] = useState<boolean>(false);
-  const [showCoordModal, setShowCoordModal] = useState<boolean>(false);
 
-  // Editable coordinates state
-  const baseGps = globalTelemetryEngine.getBaseGps();
-  const [inputLat, setInputLat] = useState<string>(baseGps.latitude.toString());
-  const [inputLon, setInputLon] = useState<string>(baseGps.longitude.toString());
+  // Configurable Landing Target (strictly distinct from Ground Station Base)
+  // Null by default until operator explicitly designates a target
+  const [targetLat, setTargetLat] = useState<number | null>(null);
+  const [targetLon, setTargetLon] = useState<number | null>(null);
 
-  // CanSat Current Coordinates from latest telemetry packet
-  const canSatLat = latestPacket?.latitude ?? baseGps.latitude;
-  const canSatLon = latestPacket?.longitude ?? baseGps.longitude;
-  const alt = latestPacket?.altitude ?? 450.2;
-  const sats = latestPacket?.gpsSats ?? 12;
+  // Target input form state
+  const [inputTargetLat, setInputTargetLat] = useState<string>('');
+  const [inputTargetLon, setInputTargetLon] = useState<string>('');
 
-  // Ground Station Coordinates
-  const gsLat = baseGps.latitude;
-  const gsLon = baseGps.longitude;
+  // Ground Station base coordinates (Fixed Base reference)
+  const gsLat = BASE_GPS.latitude;
+  const gsLon = BASE_GPS.longitude;
+
+  // Validate live GPS telemetry
+  const isGpsValid =
+    latestPacket !== null &&
+    typeof latestPacket.latitude === 'number' &&
+    typeof latestPacket.longitude === 'number' &&
+    !isNaN(latestPacket.latitude) &&
+    !isNaN(latestPacket.longitude) &&
+    latestPacket.latitude >= -90 &&
+    latestPacket.latitude <= 90 &&
+    latestPacket.longitude >= -180 &&
+    latestPacket.longitude <= 180 &&
+    latestPacket.gpsFixType !== 'NO_FIX';
+
+  const canSatLat = isGpsValid ? latestPacket!.latitude : null;
+  const canSatLon = isGpsValid ? latestPacket!.longitude : null;
+  const alt = latestPacket?.altitude;
+  const sats = latestPacket?.gpsSats ?? 0;
+  const fixType = latestPacket?.gpsFixType ?? 'NO_FIX';
+
+  // Read CARTO API key from environment variable (VITE_CARTO_API_KEY)
+  const cartoApiKey = (import.meta.env.VITE_CARTO_API_KEY ?? '').trim();
+  const hasCartoKey = cartoApiKey.length > 0;
 
   // Tile Layer URLs
-  const tileUrls = {
+  const tileUrls: Record<'osm' | 'satellite' | 'dark', string> = {
+    osm: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
     satellite: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
-    dark: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
-    osm: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+    dark: hasCartoKey
+      ? `https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png?key=${encodeURIComponent(cartoApiKey)}`
+      : 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
   };
 
-  const tileAttributions = {
-    satellite: 'Tiles &copy; Esri World Imagery',
-    dark: '&copy; OpenStreetMap &copy; CARTO',
-    osm: '&copy; OpenStreetMap contributors',
+  const tileAttributions: Record<'osm' | 'satellite' | 'dark', string> = {
+    osm: '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">OpenStreetMap</a> contributors',
+    satellite: 'Tiles &copy; Esri &mdash; Source: Esri, i-cubed, USDA, USGS, AEX, GeoEye, Getmapping, Aerogrid, IGN, IGP, UPR-EGP, and the GIS User Community',
+    dark: '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions" target="_blank" rel="noopener noreferrer">CARTO</a>',
   };
 
-  // 1. Initialize Leaflet Map
-  useEffect(() => {
-    if (!mapContainerRef.current) return;
-
-    if (!mapRef.current) {
-      const initialMap = L.map(mapContainerRef.current, {
-        center: [canSatLat, canSatLon],
-        zoom: 15,
-        zoomControl: false,
-        attributionControl: false,
-      });
-
-      tileLayerRef.current = L.tileLayer(tileUrls[mapType], {
-        maxZoom: 19,
-        attribution: tileAttributions[mapType],
-      }).addTo(initialMap);
-
-      // Scale control
-      L.control.scale({ position: 'bottomleft', imperial: false }).addTo(initialMap);
-
-      // Click on map to drop a launch site marker
-      initialMap.on('click', (e: L.LeafletMouseEvent) => {
-        const { lat, lng } = e.latlng;
-        const popupContent = document.createElement('div');
-        popupContent.className = 'font-mono text-xs text-[#E1E2EB] p-1 flex flex-col gap-1.5';
-        popupContent.innerHTML = `
-          <div class="font-bold text-[#FFD597]">📍 Clicked Coordinates</div>
-          <div class="text-[11px] text-[#9F8E78]">Lat: ${lat.toFixed(5)}°<br/>Lon: ${lng.toFixed(5)}°</div>
-          <button id="set-gs-btn" class="bg-[#38FA87] text-[#001D33] font-bold px-2 py-1 text-[10px] rounded cursor-pointer hover:bg-[#2DE076]">
-            Set Launch Site Here
-          </button>
-        `;
-
-        if (clickPopupRef.current) {
-          initialMap.closePopup(clickPopupRef.current);
-        }
-
-        const popup = L.popup()
-          .setLatLng([lat, lng])
-          .setContent(popupContent)
-          .openOn(initialMap);
-
-        clickPopupRef.current = popup;
-
-        setTimeout(() => {
-          const btn = document.getElementById('set-gs-btn');
-          if (btn) {
-            btn.onclick = () => {
-              applyNewLocation(lat, lng);
-              initialMap.closePopup(popup);
-            };
-          }
-        }, 100);
-      });
-
-      mapRef.current = initialMap;
-
-      // Auto-locate user on initial load
-      handleLocateUser(false);
-    }
-
-    return () => {
-      if (mapRef.current) {
-        mapRef.current.remove();
-        mapRef.current = null;
-      }
-    };
-  }, []);
-
-  // 2. Change Tile Layer when mapType changes
-  useEffect(() => {
-    if (!mapRef.current) return;
-    if (tileLayerRef.current) {
-      mapRef.current.removeLayer(tileLayerRef.current);
-    }
-    tileLayerRef.current = L.tileLayer(tileUrls[mapType], {
-      maxZoom: 19,
-      attribution: tileAttributions[mapType],
-    }).addTo(mapRef.current);
-  }, [mapType]);
-
-  // 3. Create/Update Markers & Polyline
-  useEffect(() => {
-    if (!mapRef.current) return;
-    const map = mapRef.current;
-
-    // Custom DivIcon for CanSat
-    const canSatHtml = `
-      <div class="relative flex flex-col items-center cursor-pointer">
-        <div class="bg-[#FFB000] text-[#000] font-mono font-bold text-[10px] px-1.5 py-0.5 rounded shadow-lg border border-[#FFF] flex items-center gap-1 whitespace-nowrap animate-bounce">
-          <svg class="w-3 h-3 text-[#000]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 14l-7 7m0 0l-7-7m7 7V3"></path></svg>
-          CANSAT (${alt.toFixed(0)}m)
-        </div>
-        <div class="w-3.5 h-3.5 bg-[#FFD597] border-2 border-[#000] rounded-full shadow-lg"></div>
-      </div>
-    `;
-
-    const canSatIcon = L.divIcon({
-      html: canSatHtml,
-      className: 'cansat-leaflet-pin',
-      iconSize: [120, 40],
-      iconAnchor: [60, 40],
-    });
-
-    if (!canSatMarkerRef.current) {
-      canSatMarkerRef.current = L.marker([canSatLat, canSatLon], { icon: canSatIcon }).addTo(map);
-    } else {
-      canSatMarkerRef.current.setLatLng([canSatLat, canSatLon]);
-      canSatMarkerRef.current.setIcon(canSatIcon);
-    }
-
-    // Ground Station Pin
-    const gsHtml = `
-      <div class="bg-[#10131A] text-[#38FA87] border border-[#38FA87] px-1.5 py-0.5 rounded text-[10px] font-mono font-bold shadow-lg flex items-center gap-1 whitespace-nowrap">
-        🎯 GS BASE
-      </div>
-    `;
-    const gsIcon = L.divIcon({
-      html: gsHtml,
-      className: 'gs-leaflet-pin',
-      iconSize: [80, 24],
-      iconAnchor: [40, 12],
-    });
-
-    if (!gsMarkerRef.current) {
-      gsMarkerRef.current = L.marker([gsLat, gsLon], { icon: gsIcon }).addTo(map);
-    } else {
-      gsMarkerRef.current.setLatLng([gsLat, gsLon]);
-    }
-
-    // Flight Path Polyline
-    const latLngs: [number, number][] =
-      historyPackets.length > 0
-        ? historyPackets.map((p) => [p.latitude, p.longitude])
-        : [[gsLat, gsLon], [canSatLat, canSatLon]];
-
-    if (!polylineRef.current) {
-      polylineRef.current = L.polyline(latLngs, {
-        color: '#FFD597',
-        weight: 3,
-        opacity: 0.85,
-        dashArray: '6, 6',
-      }).addTo(map);
-    } else {
-      polylineRef.current.setLatLngs(latLngs);
-    }
-
-    // Auto Follow
-    if (followVehicle) {
-      map.panTo([canSatLat, canSatLon], { animate: true, duration: 0.5 });
-    }
-  }, [canSatLat, canSatLon, alt, historyPackets, followVehicle, gsLat, gsLon]);
-
-  // Apply new GPS origin to Telemetry Engine & Map
-  const applyNewLocation = (lat: number, lon: number) => {
-    globalTelemetryEngine.setBaseGps(lat, lon);
-    setInputLat(lat.toString());
-    setInputLon(lon.toString());
-
-    if (mapRef.current) {
-      mapRef.current.flyTo([lat, lon], 16, { duration: 1.2 });
-    }
-
-    if (onSetCustomGroundStation) {
-      onSetCustomGroundStation(lat, lon);
-    }
-  };
-
-  // Geolocation Handler
-  const handleLocateUser = (panImmediately: boolean = true) => {
-    if (!navigator.geolocation) {
-      setGeoError('Geolocation is not supported by your browser.');
-      return;
-    }
-
-    setIsLocating(true);
-    setGeoError(null);
-
-    navigator.geolocation.getCurrentPosition(
-      (position) => {
-        setIsLocating(false);
-        const { latitude, longitude, accuracy } = position.coords;
-        const uLoc = { lat: latitude, lng: longitude, accuracy };
-        setUserLocation(uLoc);
-
-        // Instantly move telemetry generator base location to user's real coordinates!
-        applyNewLocation(latitude, longitude);
-
-        if (mapRef.current) {
-          const map = mapRef.current;
-          if (panImmediately) {
-            map.flyTo([latitude, longitude], 16, { duration: 1.2 });
-          }
-
-          // User Icon
-          const userHtml = `
-            <div class="relative flex items-center justify-center">
-              <div class="absolute w-8 h-8 bg-[#00A2FD] opacity-30 rounded-full animate-ping"></div>
-              <div class="w-4 h-4 bg-[#00A2FD] border-2 border-[#FFFFFF] rounded-full shadow-xl"></div>
-            </div>
-          `;
-          const userIcon = L.divIcon({
-            html: userHtml,
-            className: 'user-location-pin',
-            iconSize: [32, 32],
-            iconAnchor: [16, 16],
-          });
-
-          if (!userMarkerRef.current) {
-            userMarkerRef.current = L.marker([latitude, longitude], { icon: userIcon })
-              .bindPopup(`<b>Your Actual GPS Location</b><br/>Lat: ${latitude.toFixed(5)}, Lon: ${longitude.toFixed(5)}<br/>Accuracy: ~${accuracy.toFixed(0)}m`)
-              .addTo(map);
-          } else {
-            userMarkerRef.current.setLatLng([latitude, longitude]);
-          }
-
-          if (accuracy) {
-            if (!userAccuracyCircleRef.current) {
-              userAccuracyCircleRef.current = L.circle([latitude, longitude], {
-                radius: accuracy,
-                color: '#00A2FD',
-                fillColor: '#00A2FD',
-                fillOpacity: 0.15,
-                weight: 1,
-              }).addTo(map);
-            } else {
-              userAccuracyCircleRef.current.setLatLng([latitude, longitude]);
-              userAccuracyCircleRef.current.setRadius(accuracy);
-            }
-          }
-        }
-      },
-      (err) => {
-        setIsLocating(false);
-        console.warn('Geolocation error:', err);
-        setGeoError('GPS permission or location check failed. You can manually enter or click on the map to set your location.');
-      },
-      {
-        enableHighAccuracy: true,
-        timeout: 10000,
-        maximumAge: 0,
-      }
-    );
-  };
-
-  // Distance calculation (Haversine)
-  const calculateDistanceKm = (lat1: number, lon1: number, lat2: number, lon2: number) => {
-    const R = 6371;
+  // Great-circle distance calculation (Haversine formula in meters)
+  const calculateDistanceMeters = (lat1: number, lon1: number, lat2: number, lon2: number): number => {
+    const R = 6371000; // Earth radius in meters
     const dLat = ((lat2 - lat1) * Math.PI) / 180;
     const dLon = ((lon2 - lon1) * Math.PI) / 180;
     const a =
@@ -317,125 +92,425 @@ export const GpsTrackingMap: React.FC<GpsTrackingMapProps> = ({
     return R * c;
   };
 
-  const distanceToGS = calculateDistanceKm(canSatLat, canSatLon, gsLat, gsLon);
+  // Forward azimuth / bearing calculation (0° to 360°)
+  const calculateBearing = (lat1: number, lon1: number, lat2: number, lon2: number): number => {
+    const phi1 = (lat1 * Math.PI) / 180;
+    const phi2 = (lat2 * Math.PI) / 180;
+    const dLambda = ((lon2 - lon1) * Math.PI) / 180;
+    const y = Math.sin(dLambda) * Math.cos(phi2);
+    const x = Math.cos(phi1) * Math.sin(phi2) - Math.sin(phi1) * Math.cos(phi2) * Math.cos(dLambda);
+    const theta = Math.atan2(y, x);
+    return (theta * 180 / Math.PI + 360) % 360;
+  };
 
-  const handleManualCoordSubmit = (e: React.FormEvent) => {
+  // Distance to landing target (only when CanSat position and target are both explicitly valid)
+  const distanceToTargetMeters = useMemo(() => {
+    if (canSatLat === null || canSatLon === null || targetLat === null || targetLon === null) return null;
+    return calculateDistanceMeters(canSatLat, canSatLon, targetLat, targetLon);
+  }, [canSatLat, canSatLon, targetLat, targetLon]);
+
+  // Bearing to landing target (only when CanSat position and target are both explicitly valid)
+  const bearingToTargetDeg = useMemo(() => {
+    if (canSatLat === null || canSatLon === null || targetLat === null || targetLon === null) return null;
+    return calculateBearing(canSatLat, canSatLon, targetLat, targetLon);
+  }, [canSatLat, canSatLon, targetLat, targetLon]);
+
+  // Distance from CanSat to Ground Station base
+  const distanceToGsMeters = useMemo(() => {
+    if (canSatLat === null || canSatLon === null) return null;
+    return calculateDistanceMeters(canSatLat, canSatLon, gsLat, gsLon);
+  }, [canSatLat, canSatLon, gsLat, gsLon]);
+
+  // Format latitude/longitude for display (e.g., "13.35250° N, 74.79280° E")
+  const formatCoordinates = (lat: number | null, lon: number | null) => {
+    if (lat === null || lon === null || isNaN(lat) || isNaN(lon)) return 'UNAVAILABLE';
+    const latDir = lat >= 0 ? 'N' : 'S';
+    const lonDir = lon >= 0 ? 'E' : 'W';
+    return `${Math.abs(lat).toFixed(5)}° ${latDir}, ${Math.abs(lon).toFixed(5)}° ${lonDir}`;
+  };
+
+  // 1. Initialize Leaflet Map
+  useEffect(() => {
+    const container = mapContainerRef.current;
+    if (!container) return;
+
+    const initialCenter: [number, number] = canSatLat !== null && canSatLon !== null
+      ? [canSatLat, canSatLon]
+      : [gsLat, gsLon];
+
+    const map = L.map(container, {
+      center: initialCenter,
+      zoom: 16,
+      zoomControl: false,
+      attributionControl: true,
+    });
+
+    const tileLayer = L.tileLayer(tileUrls[mapType], {
+      maxZoom: 19,
+      subdomains: 'abcd',
+      attribution: tileAttributions[mapType],
+    }).addTo(map);
+
+    tileLayerRef.current = tileLayer;
+
+    // Scale control (metric)
+    L.control.scale({ position: 'bottomleft', imperial: false }).addTo(map);
+
+    // Map click: allow operator to set landing target coordinates interactively
+    map.on('click', (e: L.LeafletMouseEvent) => {
+      const { lat, lng } = e.latlng;
+      setTargetLat(Number(lat.toFixed(6)));
+      setTargetLon(Number(lng.toFixed(6)));
+      setInputTargetLat(lat.toFixed(6));
+      setInputTargetLon(lng.toFixed(6));
+    });
+
+    mapRef.current = map;
+
+    // Resize observer to ensure tiles invalidate properly when tabs switch or container resizes
+    const resizeObserver = new ResizeObserver(() => {
+      map.invalidateSize();
+    });
+    resizeObserver.observe(container);
+
+    return () => {
+      resizeObserver.disconnect();
+      if (canSatMarkerRef.current) {
+        canSatMarkerRef.current.remove();
+        canSatMarkerRef.current = null;
+      }
+      if (targetMarkerRef.current) {
+        targetMarkerRef.current.remove();
+        targetMarkerRef.current = null;
+      }
+      if (gsMarkerRef.current) {
+        gsMarkerRef.current.remove();
+        gsMarkerRef.current = null;
+      }
+      if (polylineRef.current) {
+        polylineRef.current.remove();
+        polylineRef.current = null;
+      }
+      if (targetVectorRef.current) {
+        targetVectorRef.current.remove();
+        targetVectorRef.current = null;
+      }
+      map.remove();
+      mapRef.current = null;
+    };
+  }, []);
+
+  // 2. Change Tile Layer on mapType toggle
+  useEffect(() => {
+    if (!mapRef.current) return;
+    if (tileLayerRef.current) {
+      mapRef.current.removeLayer(tileLayerRef.current);
+    }
+    tileLayerRef.current = L.tileLayer(tileUrls[mapType], {
+      maxZoom: 19,
+      subdomains: 'abcd',
+      attribution: tileAttributions[mapType],
+    }).addTo(mapRef.current);
+  }, [mapType]);
+
+  // 3. Update Markers, Target, and Trajectory Trails
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+
+    // --- Marker A: Configurable Landing Target (Only rendered if target is explicitly set) ---
+    if (targetLat !== null && targetLon !== null) {
+      const targetHtml = `
+        <div style="transform: translate(-50%, -50%); display: flex; flex-direction: column; align-items: center; pointer-events: none;">
+          <div style="background: rgba(14, 20, 27, 0.95); border: 1px solid #28C76F; color: #28C76F; font-family: monospace; font-size: 10px; font-weight: 700; padding: 2px 6px; border-radius: 2px; white-space: nowrap; box-shadow: 0 2px 6px rgba(0,0,0,0.6);">
+            TARGET
+          </div>
+          <div style="width: 14px; height: 14px; border: 2px solid #28C76F; border-radius: 50%; margin-top: 2px; position: relative; background: rgba(40, 199, 111, 0.2);">
+            <div style="position: absolute; width: 4px; height: 4px; background: #28C76F; border-radius: 50%; top: 3px; left: 3px;"></div>
+          </div>
+        </div>
+      `;
+      const targetIcon = L.divIcon({
+        html: targetHtml,
+        className: 'target-marker-icon',
+        iconSize: [0, 0],
+      });
+
+      if (!targetMarkerRef.current) {
+        targetMarkerRef.current = L.marker([targetLat, targetLon], { icon: targetIcon, interactive: false }).addTo(map);
+      } else {
+        targetMarkerRef.current.setLatLng([targetLat, targetLon]);
+        targetMarkerRef.current.setIcon(targetIcon);
+      }
+    } else {
+      if (targetMarkerRef.current) {
+        targetMarkerRef.current.remove();
+        targetMarkerRef.current = null;
+      }
+    }
+
+    // --- Marker B: Ground Station Base (Fixed Reference) ---
+    const gsHtml = `
+      <div style="transform: translate(-50%, -50%); display: flex; flex-direction: column; align-items: center; pointer-events: none;">
+        <div style="background: rgba(14, 20, 27, 0.9); border: 1px solid #388BFD; color: #388BFD; font-family: monospace; font-size: 9px; font-weight: 600; padding: 1px 4px; border-radius: 2px; white-space: nowrap;">
+          GS BASE
+        </div>
+        <div style="width: 8px; height: 8px; background: #388BFD; border: 1px solid #FFF; transform: rotate(45deg); margin-top: 2px;"></div>
+      </div>
+    `;
+    const gsIcon = L.divIcon({
+      html: gsHtml,
+      className: 'gs-marker-icon',
+      iconSize: [0, 0],
+    });
+
+    if (!gsMarkerRef.current) {
+      gsMarkerRef.current = L.marker([gsLat, gsLon], { icon: gsIcon, interactive: false }).addTo(map);
+    } else {
+      gsMarkerRef.current.setLatLng([gsLat, gsLon]);
+    }
+
+    // --- Marker C: Live/Simulated CanSat Position ---
+    if (canSatLat !== null && canSatLon !== null) {
+      const altStr = typeof alt === 'number' ? `${alt.toFixed(0)}m` : '--';
+      const canSatHtml = `
+        <div style="transform: translate(-50%, -100%); display: flex; flex-direction: column; align-items: center; cursor: pointer;">
+          <div style="background: #E5A93C; color: #0E141B; font-family: monospace; font-size: 10px; font-weight: 700; padding: 2px 6px; border-radius: 2px; border: 1px solid #0E141B; white-space: nowrap; box-shadow: 0 2px 8px rgba(0,0,0,0.7); display: flex; align-items: center; gap: 4px;">
+            <span>CANSAT</span>
+            <span style="opacity: 0.85;">(${altStr})</span>
+          </div>
+          <div style="width: 10px; height: 10px; background: #E5A93C; border: 2px solid #0E141B; border-radius: 50%; box-shadow: 0 0 0 2px #E5A93C; margin-top: 1px;"></div>
+        </div>
+      `;
+      const canSatIcon = L.divIcon({
+        html: canSatHtml,
+        className: 'cansat-marker-icon',
+        iconSize: [0, 0],
+        iconAnchor: [0, 0],
+      });
+
+      if (!canSatMarkerRef.current) {
+        canSatMarkerRef.current = L.marker([canSatLat, canSatLon], { icon: canSatIcon, zIndexOffset: 1000 }).addTo(map);
+      } else {
+        canSatMarkerRef.current.setLatLng([canSatLat, canSatLon]);
+        canSatMarkerRef.current.setIcon(canSatIcon);
+      }
+
+      // Auto-follow vehicle
+      if (followVehicle) {
+        map.panTo([canSatLat, canSatLon], { animate: true, duration: 0.25 });
+      }
+
+      // Range Vector to Landing Target (only if target is configured)
+      if (targetLat !== null && targetLon !== null) {
+        const vectorCoords: [number, number][] = [
+          [canSatLat, canSatLon],
+          [targetLat, targetLon],
+        ];
+        if (!targetVectorRef.current) {
+          targetVectorRef.current = L.polyline(vectorCoords, {
+            color: '#28C76F',
+            weight: 1.5,
+            dashArray: '4, 4',
+            opacity: 0.7,
+          }).addTo(map);
+        } else {
+          targetVectorRef.current.setLatLngs(vectorCoords);
+        }
+      } else if (targetVectorRef.current) {
+        targetVectorRef.current.remove();
+        targetVectorRef.current = null;
+      }
+    } else {
+      // Remove marker if position became unavailable
+      if (canSatMarkerRef.current) {
+        canSatMarkerRef.current.remove();
+        canSatMarkerRef.current = null;
+      }
+      if (targetVectorRef.current) {
+        targetVectorRef.current.remove();
+        targetVectorRef.current = null;
+      }
+    }
+
+    // --- Trail: Historical GPS Breadcrumbs ---
+    const validHistory: [number, number][] = historyPackets
+      .filter((p) => typeof p.latitude === 'number' && typeof p.longitude === 'number' && !isNaN(p.latitude) && !isNaN(p.longitude))
+      .map((p) => [p.latitude, p.longitude]);
+
+    if (validHistory.length > 1) {
+      if (!polylineRef.current) {
+        polylineRef.current = L.polyline(validHistory, {
+          color: '#E5A93C',
+          weight: 2,
+          opacity: 0.8,
+          dashArray: '3, 4',
+        }).addTo(map);
+      } else {
+        polylineRef.current.setLatLngs(validHistory);
+      }
+    }
+  }, [canSatLat, canSatLon, alt, targetLat, targetLon, gsLat, gsLon, historyPackets, followVehicle]);
+
+  // Handle manual target coordinate submission
+  const handleTargetSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    const parsedLat = parseFloat(inputLat);
-    const parsedLon = parseFloat(inputLon);
+    const parsedLat = parseFloat(inputTargetLat);
+    const parsedLon = parseFloat(inputTargetLon);
 
     if (isNaN(parsedLat) || isNaN(parsedLon)) {
-      setGeoError('Please enter valid numeric latitude and longitude.');
+      setGeoError('Enter valid decimal degrees (numbers only).');
       return;
     }
 
-    if (parsedLat < -90 || parsedLat > 90 || parsedLon < -180 || parsedLon > 180) {
-      setGeoError('Latitude must be between -90 and 90, Longitude between -180 and 180.');
+    if (parsedLat < -90 || parsedLat > 90) {
+      setGeoError('Latitude must be between -90.0° and +90.0°.');
+      return;
+    }
+
+    if (parsedLon < -180 || parsedLon > 180) {
+      setGeoError('Longitude must be between -180.0° and +180.0°.');
       return;
     }
 
     setGeoError(null);
-    applyNewLocation(parsedLat, parsedLon);
-    setShowCoordModal(false);
+    setTargetLat(parsedLat);
+    setTargetLon(parsedLon);
+    setShowTargetModal(false);
+
+    if (mapRef.current) {
+      mapRef.current.flyTo([parsedLat, parsedLon], 16, { duration: 0.8 });
+    }
   };
 
   return (
-    <div className="telemetry-panel panel-blue-accent flex flex-col h-full select-none overflow-hidden group relative">
-      {/* Header Bar */}
-      <div className="p-2 sm:p-2.5 bg-[#10131A] border-b border-[#272A31] flex justify-between items-center z-10 shrink-0">
+    <div className="bg-[var(--bg-surface-1)] border border-[var(--border-subtle)] rounded-[var(--radius-md)] flex flex-col h-full select-none overflow-hidden relative">
+      {/* Top HUD Header Bar */}
+      <div className="p-2 sm:p-2.5 bg-[var(--bg-surface-1)] border-b border-[var(--border-subtle)] flex justify-between items-center z-10 shrink-0">
         <div className="flex items-center gap-2">
-          <MapPin className="w-3.5 h-3.5 text-[#00A2FD]" />
-          <span className="font-mono-data text-xs font-bold text-[#D7C4AC] uppercase tracking-wider">
-            GPS TRACKING (LEAFLET MAP)
+          <MapPin className="w-3.5 h-3.5 text-[var(--status-info)]" />
+          <span className="font-mono-data text-xs font-bold text-[var(--text-primary)] uppercase tracking-tight">
+            GPS RECOVERY & TARGET TRACKING
+          </span>
+          {/* Transparent Simulation Source Indicator */}
+          <span className="hidden sm:inline-block font-mono-data text-[9px] px-1.5 py-0.2 bg-[var(--bg-surface-2)] text-[var(--status-info)] border border-[var(--border-subtle)] rounded-[var(--radius-xs)]">
+            SIMULATED NEO-M9N
           </span>
         </div>
 
         <div className="flex items-center gap-2 font-mono-data text-[10px]">
-          {/* Fix & Satellite Badge */}
-          <span className="text-[#38FA87] bg-[#1D2026] px-1.5 py-0.5 border border-[#2A2E35] flex items-center gap-1">
-            <Satellite className="w-3 h-3 text-[#38FA87]" />
-            3D FIX ({sats} SAT)
+          {/* GNSS Fix Badge */}
+          <span
+            className={`px-1.5 py-0.5 border flex items-center gap-1 rounded-[var(--radius-xs)] ${
+              fixType === '3D'
+                ? 'text-[var(--status-nominal)] bg-[var(--status-nominal-bg)] border-[var(--status-nominal)]/40 font-semibold'
+                : fixType === '2D'
+                ? 'text-[var(--status-warning)] bg-[var(--status-warning-bg)] border-[var(--status-warning)]/40'
+                : 'text-[var(--status-alert)] bg-[var(--status-alert-bg)] border-[var(--status-alert)]/40'
+            }`}
+          >
+            <Satellite className="w-3 h-3" />
+            {fixType} ({sats} SATS)
           </span>
 
-          {/* Map Layer Selector */}
-          <div className="hidden sm:flex items-center bg-[#1D2026] border border-[#2A2E35] rounded-none overflow-hidden">
+          {/* Map Layer Switcher */}
+          <div className="hidden md:flex items-center bg-[var(--bg-surface-2)] border border-[var(--border-subtle)] rounded-[var(--radius-xs)] overflow-hidden">
             <button
+              type="button"
+              onClick={() => setMapType('osm')}
+              title="OpenStreetMap Standard Street Layer (Default)"
+              className={`px-2 py-0.5 text-[9px] cursor-pointer transition-colors ${
+                mapType === 'osm'
+                  ? 'bg-[var(--bg-surface-elevated)] text-[var(--action-amber)] font-bold border-r border-[var(--border-subtle)]'
+                  : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)] border-r border-[var(--border-subtle)]'
+              }`}
+            >
+              STREET (OSM)
+            </button>
+            <button
+              type="button"
               onClick={() => setMapType('satellite')}
-              className={`px-1.5 py-0.5 text-[9px] cursor-pointer ${
-                mapType === 'satellite' ? 'bg-[#00A2FD] text-[#001D33] font-bold' : 'text-[#9F8E78] hover:text-[#E1E2EB]'
+              title="Esri World Imagery Satellite Layer"
+              className={`px-2 py-0.5 text-[9px] cursor-pointer transition-colors ${
+                mapType === 'satellite'
+                  ? 'bg-[var(--bg-surface-elevated)] text-[var(--action-amber)] font-bold border-r border-[var(--border-subtle)]'
+                  : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)] border-r border-[var(--border-subtle)]'
               }`}
             >
               SATELLITE
             </button>
-            <button
-              onClick={() => setMapType('dark')}
-              className={`px-1.5 py-0.5 text-[9px] cursor-pointer ${
-                mapType === 'dark' ? 'bg-[#00A2FD] text-[#001D33] font-bold' : 'text-[#9F8E78] hover:text-[#E1E2EB]'
-              }`}
-            >
-              DARK
-            </button>
-            <button
-              onClick={() => setMapType('osm')}
-              className={`px-1.5 py-0.5 text-[9px] cursor-pointer ${
-                mapType === 'osm' ? 'bg-[#00A2FD] text-[#001D33] font-bold' : 'text-[#9F8E78] hover:text-[#E1E2EB]'
-              }`}
-            >
-              STREET
-            </button>
+            {hasCartoKey ? (
+              <button
+                type="button"
+                onClick={() => setMapType('dark')}
+                title="CARTO Dark Matter Basemap"
+                className={`px-2 py-0.5 text-[9px] cursor-pointer transition-colors ${
+                  mapType === 'dark'
+                    ? 'bg-[var(--bg-surface-elevated)] text-[var(--action-amber)] font-bold'
+                    : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
+                }`}
+              >
+                DARK
+              </button>
+            ) : (
+              <button
+                type="button"
+                disabled
+                title="CARTO Dark Basemap requires VITE_CARTO_API_KEY in environment and is not configured."
+                className="px-2 py-0.5 text-[9px] text-[var(--text-tertiary)] opacity-60 cursor-not-allowed bg-[var(--bg-surface-1)] flex items-center gap-1"
+              >
+                <span>DARK</span>
+                <span className="text-[8px] px-1 py-0.2 bg-[var(--bg-surface-2)] text-[var(--status-alert)] border border-[var(--border-subtle)] rounded-[var(--radius-xs)]">
+                  NO KEY
+                </span>
+              </button>
+            )}
           </div>
 
-          {/* Action Buttons */}
-          <div className="flex items-center gap-1">
-            {/* Locate My Location Button */}
-            <button
-              onClick={() => handleLocateUser(true)}
-              disabled={isLocating}
-              title="Detect & Set My GPS Location"
-              className={`px-2 py-0.5 border cursor-pointer font-bold flex items-center gap-1 transition-colors ${
-                userLocation
-                  ? 'bg-[#00A2FD] text-[#001D33] border-[#00A2FD]'
-                  : 'bg-[#1D2026] text-[#38FA87] hover:bg-[#272A31] border-[#38FA87]/60'
-              }`}
-            >
-              <Locate className={`w-3 h-3 ${isLocating ? 'animate-spin' : ''}`} />
-              <span className="hidden md:inline">{isLocating ? 'LOCATING...' : 'MY LOCATION'}</span>
-            </button>
+          {/* Target Coordinates Configuration Button */}
+          <button
+            onClick={() => {
+              setInputTargetLat(targetLat !== null ? targetLat.toFixed(6) : '');
+              setInputTargetLon(targetLon !== null ? targetLon.toFixed(6) : '');
+              setShowTargetModal(true);
+            }}
+            title="Configure Target Landing Coordinates"
+            className={`px-2 py-0.5 border cursor-pointer flex items-center gap-1 rounded-[var(--radius-xs)] font-medium transition-colors ${
+              targetLat !== null
+                ? 'bg-[var(--bg-surface-2)] text-[var(--status-nominal)] border-[var(--status-nominal)]/40 hover:text-[var(--text-primary)]'
+                : 'bg-[var(--bg-surface-2)] text-[var(--text-secondary)] border-[var(--border-subtle)] hover:text-[var(--text-primary)]'
+            }`}
+          >
+            <Target className="w-3 h-3 text-[var(--status-nominal)]" />
+            <span className="hidden sm:inline">{targetLat !== null ? 'TARGET SET' : 'SET TARGET'}</span>
+          </button>
 
-            {/* Edit Coordinates Button */}
-            <button
-              onClick={() => setShowCoordModal(true)}
-              title="Set Custom Latitude/Longitude"
-              className="p-1 bg-[#1D2026] text-[#FFD597] hover:text-[#FFF] border border-[#FFD597]/40 cursor-pointer flex items-center gap-1"
-            >
-              <Edit3 className="w-3.5 h-3.5" />
-            </button>
+          {/* Follow CanSat Toggle */}
+          <button
+            onClick={() => setFollowVehicle(!followVehicle)}
+            title={followVehicle ? 'Recenter Locked: Auto-following CanSat' : 'Click to Lock Recenter on CanSat'}
+            className={`p-1 border cursor-pointer rounded-[var(--radius-xs)] transition-colors ${
+              followVehicle
+                ? 'bg-[var(--bg-surface-elevated)] text-[var(--action-amber)] border-[var(--border-amber)]'
+                : 'bg-[var(--bg-surface-2)] text-[var(--text-tertiary)] border-[var(--border-subtle)]'
+            }`}
+          >
+            <Crosshair className="w-3.5 h-3.5" />
+          </button>
 
-            {/* Follow Vehicle Button */}
-            <button
-              onClick={() => setFollowVehicle(!followVehicle)}
-              title="Lock / Recenter on CanSat"
-              className={`p-1 border cursor-pointer ${
-                followVehicle
-                  ? 'bg-[#FFD597] text-[#000] border-[#FFD597] font-bold'
-                  : 'bg-[#1D2026] text-[#9F8E78] border-[#2A2E35]'
-              }`}
-            >
-              <Crosshair className="w-3.5 h-3.5" />
-            </button>
-
-            {/* Zoom Controls */}
+          {/* Zoom In / Out Controls */}
+          <div className="flex items-center gap-0.5">
             <button
               onClick={() => mapRef.current?.zoomIn()}
               title="Zoom In"
-              className="p-1 bg-[#1D2026] text-[#9F8E78] hover:text-[#E1E2EB] border border-[#2A2E35] cursor-pointer"
+              className="p-1 bg-[var(--bg-surface-2)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] border border-[var(--border-subtle)] cursor-pointer rounded-[var(--radius-xs)]"
             >
               <ZoomIn className="w-3.5 h-3.5" />
             </button>
             <button
               onClick={() => mapRef.current?.zoomOut()}
               title="Zoom Out"
-              className="p-1 bg-[#1D2026] text-[#9F8E78] hover:text-[#E1E2EB] border border-[#2A2E35] cursor-pointer"
+              className="p-1 bg-[var(--bg-surface-2)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] border border-[var(--border-subtle)] cursor-pointer rounded-[var(--radius-xs)]"
             >
               <ZoomOut className="w-3.5 h-3.5" />
             </button>
@@ -443,116 +518,190 @@ export const GpsTrackingMap: React.FC<GpsTrackingMapProps> = ({
         </div>
       </div>
 
-      {/* Geolocation Alert or Error Bar */}
+      {/* Geolocation / Target Validation Alert */}
       {geoError && (
-        <div className="bg-[#FFB4AB]/10 border-b border-[#FFB4AB] text-[#FFB4AB] px-3 py-1 font-mono-data text-[10px] flex items-center justify-between z-10">
+        <div className="bg-[var(--status-alert-bg)] border-b border-[var(--status-alert)] text-[var(--status-alert)] px-3 py-1 font-mono-data text-[10px] flex items-center justify-between z-10">
           <div className="flex items-center gap-1.5">
-            <ShieldAlert className="w-3.5 h-3.5 text-[#FFB4AB]" />
+            <ShieldAlert className="w-3.5 h-3.5 text-[var(--status-alert)]" />
             <span>{geoError}</span>
           </div>
-          <button onClick={() => setGeoError(null)} className="text-[#FFB4AB] underline cursor-pointer">
+          <button onClick={() => setGeoError(null)} className="underline cursor-pointer">
             Dismiss
           </button>
         </div>
       )}
 
-      {/* Main Leaflet Map Viewport Container */}
-      <div className="flex-1 relative bg-[#0B0E14] overflow-hidden min-h-[240px]">
+      {/* Main Map Viewport */}
+      <div className="flex-1 relative bg-[var(--bg-base)] overflow-hidden min-h-[240px]">
         <div ref={mapContainerRef} className="absolute inset-0 w-full h-full z-0" />
 
-        {/* Live Telemetry Overlay Card */}
-        <div className="absolute top-2 left-2 bg-[#10131A]/90 border border-[#2A2E35] px-2.5 py-1.5 font-mono-data text-[10px] text-[#D7C4AC] flex flex-col gap-0.5 shadow-xl backdrop-blur-sm z-10 pointer-events-none">
+        {/* Tactical HUD Overlay - Top-Left: CanSat Live Coordinates */}
+        <div className="absolute top-2 left-2 bg-[var(--bg-surface-1)]/95 border border-[var(--border-subtle)] px-2.5 py-1.5 font-mono-data text-[10px] text-[var(--text-secondary)] flex flex-col gap-0.5 shadow-lg backdrop-blur-sm z-10 pointer-events-none rounded-[var(--radius-xs)]">
           <div className="flex gap-2 items-center">
-            <span className="text-[#9F8E78]">CANSAT LAT:</span>
-            <span className="text-[#E1E2EB] font-bold">{canSatLat.toFixed(5)}° N</span>
+            <span className="text-[var(--text-tertiary)]">CANSAT POS:</span>
+            <span className={`font-bold tabular-nums ${isGpsValid ? 'text-[var(--action-amber)]' : 'text-[var(--status-alert)]'}`}>
+              {formatCoordinates(canSatLat, canSatLon)}
+            </span>
           </div>
           <div className="flex gap-2 items-center">
-            <span className="text-[#9F8E78]">CANSAT LON:</span>
-            <span className="text-[#E1E2EB] font-bold">{canSatLon.toFixed(5)}° W</span>
+            <span className="text-[var(--text-tertiary)]">ALTITUDE:</span>
+            <span className="text-[var(--text-primary)] font-bold tabular-nums">
+              {typeof alt === 'number' ? `${alt.toFixed(1)} m AGL` : 'UNAVAILABLE'}
+            </span>
           </div>
-          <div className="flex gap-2 items-center">
-            <span className="text-[#9F8E78]">ALTITUDE:</span>
-            <span className="text-[#FFD597] font-bold">{alt.toFixed(1)} m</span>
+          <div className="flex gap-2 items-center text-[9px] text-[var(--text-tertiary)] pt-0.5 border-t border-[var(--border-subtle)]">
+            <span>TRAIL POINTS:</span>
+            <span className="text-[var(--text-secondary)] tabular-nums">{historyPackets.length}</span>
           </div>
         </div>
 
-        {/* Ground Station Base Coordinate Badge */}
-        <div className="absolute bottom-2 left-2 bg-[#10131A]/90 border border-[#38FA87] px-2.5 py-1 font-mono-data text-[10px] text-[#38FA87] flex items-center gap-1.5 shadow-xl backdrop-blur-sm z-10">
-          <Target className="w-3 h-3 text-[#38FA87]" />
-          <span>GS BASE: {gsLat.toFixed(4)}°, {gsLon.toFixed(4)}°</span>
+        {/* Tactical HUD Overlay - Top-Right: Target Guidance or Unset Indicator */}
+        <div className="absolute top-2 right-2 bg-[var(--bg-surface-1)]/95 border border-[var(--border-subtle)] px-2.5 py-1.5 font-mono-data text-[10px] text-[var(--text-secondary)] flex flex-col gap-0.5 shadow-lg backdrop-blur-sm z-10 pointer-events-none rounded-[var(--radius-xs)]">
+          {targetLat !== null && targetLon !== null ? (
+            <>
+              <div className="flex gap-2 items-center">
+                <Navigation className="w-3 h-3 text-[var(--status-nominal)]" />
+                <span className="text-[var(--text-tertiary)]">RANGE TO TARGET:</span>
+                <span className="text-[var(--status-nominal)] font-bold tabular-nums">
+                  {distanceToTargetMeters !== null
+                    ? distanceToTargetMeters < 1000
+                      ? `${distanceToTargetMeters.toFixed(1)} m`
+                      : `${(distanceToTargetMeters / 1000).toFixed(2)} km`
+                    : 'AWAITING GPS'}
+                </span>
+              </div>
+              <div className="flex gap-2 items-center">
+                <Compass className="w-3 h-3 text-[var(--text-secondary)]" />
+                <span className="text-[var(--text-tertiary)]">BEARING TO TARGET:</span>
+                <span className="text-[var(--text-primary)] font-bold tabular-nums">
+                  {bearingToTargetDeg !== null ? `${bearingToTargetDeg.toFixed(1)}°` : 'AWAITING GPS'}
+                </span>
+              </div>
+            </>
+          ) : (
+            <div className="flex flex-col gap-0.5">
+              <div className="flex gap-2 items-center">
+                <Target className="w-3 h-3 text-[var(--text-tertiary)]" />
+                <span className="text-[var(--text-tertiary)]">TARGET STATUS:</span>
+                <span className="text-[var(--text-secondary)] font-bold">TARGET NOT SET</span>
+              </div>
+              <span className="text-[9px] text-[var(--text-tertiary)] opacity-80">
+                Click map or use SET TARGET to assign
+              </span>
+            </div>
+          )}
         </div>
 
-        {/* Ground Station Distance Badge */}
-        <div className="absolute bottom-2 right-2 bg-[#10131A]/90 border border-[#2A2E35] px-2.5 py-1 font-mono-data text-[10px] text-[#98CBFF] flex items-center gap-1.5 shadow-xl backdrop-blur-sm z-10 pointer-events-none">
-          <Navigation className="w-3 h-3 text-[#00A2FD]" />
-          <span>RANGE TO GS: {distanceToGS.toFixed(2)} km</span>
+        {/* Tactical HUD Overlay - Bottom-Left: Target Coordinates Badge */}
+        <div className="absolute bottom-6 left-2 bg-[var(--bg-surface-1)]/90 border border-[var(--border-subtle)] px-2 py-1 font-mono-data text-[10px] flex items-center gap-1.5 shadow-lg backdrop-blur-sm z-10 rounded-[var(--radius-xs)]">
+          <Target className={`w-3 h-3 ${targetLat !== null ? 'text-[var(--status-nominal)]' : 'text-[var(--text-tertiary)]'}`} />
+          {targetLat !== null && targetLon !== null ? (
+            <span className="text-[var(--status-nominal)]">TARGET: {formatCoordinates(targetLat, targetLon)}</span>
+          ) : (
+            <span className="text-[var(--text-tertiary)]">TARGET: <strong className="font-semibold text-[var(--text-secondary)]">TARGET NOT SET</strong></span>
+          )}
+        </div>
+
+        {/* Tactical HUD Overlay - Bottom-Right: Ground Station Reference */}
+        <div className="absolute bottom-6 right-2 bg-[var(--bg-surface-1)]/90 border border-[var(--border-subtle)] px-2 py-1 font-mono-data text-[10px] text-[var(--status-info)] flex items-center gap-1.5 shadow-lg backdrop-blur-sm z-10 pointer-events-none rounded-[var(--radius-xs)]">
+          <Radio className="w-3 h-3 text-[var(--status-info)]" />
+          <span>GS BASE: {formatCoordinates(gsLat, gsLon)}</span>
+          {distanceToGsMeters !== null && (
+            <span className="text-[var(--text-secondary)] tabular-nums">
+              ({distanceToGsMeters < 1000 ? `${distanceToGsMeters.toFixed(0)}m` : `${(distanceToGsMeters / 1000).toFixed(2)}km`})
+            </span>
+          )}
         </div>
       </div>
 
-      {/* Manual Coordinate Entry Modal */}
-      {showCoordModal && (
-        <div className="fixed inset-0 bg-[#0B0E14]/80 backdrop-blur-sm flex items-center justify-center p-4 z-50">
-          <div className="bg-[#10131A] border border-[#2A2E35] max-w-sm w-full p-4 font-mono-data text-xs text-[#E1E2EB] shadow-2xl space-y-3">
-            <div className="flex justify-between items-center border-b border-[#272A31] pb-2">
-              <span className="font-bold text-[#FFD597] uppercase tracking-wider flex items-center gap-2">
-                <Edit3 className="w-4 h-4 text-[#FFD597]" />
-                Set Custom Launch Coordinates
+      {/* Target Landing Coordinate Configuration Modal */}
+      {showTargetModal && (
+        <div className="fixed inset-0 bg-[#000000]/70 backdrop-blur-xs flex items-center justify-center p-4 z-50">
+          <div className="bg-[var(--bg-surface-1)] border border-[var(--border-focus)] max-w-sm w-full p-4 font-mono-data text-xs text-[var(--text-primary)] shadow-2xl space-y-3 rounded-[var(--radius-md)]">
+            <div className="flex justify-between items-center border-b border-[var(--border-subtle)] pb-2">
+              <span className="font-bold text-[var(--text-primary)] uppercase tracking-tight flex items-center gap-1.5">
+                <Target className="w-4 h-4 text-[var(--status-nominal)]" />
+                Configure Landing Target
               </span>
               <button
-                onClick={() => setShowCoordModal(false)}
-                className="text-[#9F8E78] hover:text-[#E1E2EB] cursor-pointer"
+                onClick={() => setShowTargetModal(false)}
+                className="text-[var(--text-tertiary)] hover:text-[var(--text-primary)] cursor-pointer"
               >
-                ✕
+                <X className="w-4 h-4" />
               </button>
             </div>
 
-            <p className="text-[#D7C4AC] text-[11px] leading-relaxed">
-              Enter your exact Latitude and Longitude to center the Ground Station and CanSat descent trajectory anywhere on Earth:
+            <p className="text-[var(--text-secondary)] text-[11px] leading-relaxed">
+              Enter target landing coordinates in decimal degrees, or click anywhere directly on the map surface to place the target marker:
             </p>
 
-            <form onSubmit={handleManualCoordSubmit} className="space-y-3">
+            <form onSubmit={handleTargetSubmit} className="space-y-3">
               <div>
-                <label className="block text-[#9F8E78] text-[10px] mb-1">LATITUDE (Degrees North/South)</label>
+                <label className="block text-[var(--text-secondary)] text-[10px] mb-1">
+                  TARGET LATITUDE (-90.0° to +90.0°)
+                </label>
                 <input
                   type="text"
-                  value={inputLat}
-                  onChange={(e) => setInputLat(e.target.value)}
-                  placeholder="e.g. 37.7749 or 12.9716"
-                  className="w-full bg-[#0B0E14] border border-[#2A2E35] px-2.5 py-1.5 text-xs text-[#E1E2EB] focus:outline-none focus:border-[#00A2FD]"
+                  value={inputTargetLat}
+                  onChange={(e) => setInputTargetLat(e.target.value)}
+                  placeholder="e.g. 13.35250"
+                  className="w-full bg-[var(--bg-base)] border border-[var(--border-subtle)] px-2.5 py-1.5 text-xs text-[var(--text-primary)] font-mono-data tabular-nums focus:outline-none focus:border-[var(--status-nominal)] rounded-[var(--radius-xs)]"
                 />
               </div>
 
               <div>
-                <label className="block text-[#9F8E78] text-[10px] mb-1">LONGITUDE (Degrees East/West)</label>
+                <label className="block text-[var(--text-secondary)] text-[10px] mb-1">
+                  TARGET LONGITUDE (-180.0° to +180.0°)
+                </label>
                 <input
                   type="text"
-                  value={inputLon}
-                  onChange={(e) => setInputLon(e.target.value)}
-                  placeholder="e.g. -122.4194 or 77.5946"
-                  className="w-full bg-[#0B0E14] border border-[#2A2E35] px-2.5 py-1.5 text-xs text-[#E1E2EB] focus:outline-none focus:border-[#00A2FD]"
+                  value={inputTargetLon}
+                  onChange={(e) => setInputTargetLon(e.target.value)}
+                  placeholder="e.g. 74.79280"
+                  className="w-full bg-[var(--bg-base)] border border-[var(--border-subtle)] px-2.5 py-1.5 text-xs text-[var(--text-primary)] font-mono-data tabular-nums focus:outline-none focus:border-[var(--status-nominal)] rounded-[var(--radius-xs)]"
                 />
               </div>
 
               <div className="flex justify-between items-center pt-2">
-                <button
-                  type="button"
-                  onClick={() => handleLocateUser(true)}
-                  className="bg-[#1D2026] text-[#38FA87] border border-[#38FA87]/40 px-2.5 py-1 text-[11px] font-bold cursor-pointer hover:bg-[#272A31] flex items-center gap-1"
-                >
-                  <Locate className="w-3 h-3" /> Use GPS
-                </button>
+                <div className="flex items-center gap-2">
+                  {targetLat !== null && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setTargetLat(null);
+                        setTargetLon(null);
+                        setInputTargetLat('');
+                        setInputTargetLon('');
+                        setShowTargetModal(false);
+                      }}
+                      className="text-[10px] text-[var(--status-alert)] hover:underline cursor-pointer"
+                    >
+                      Clear
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setInputTargetLat(BASE_GPS.latitude.toFixed(6));
+                      setInputTargetLon(BASE_GPS.longitude.toFixed(6));
+                    }}
+                    className="text-[10px] text-[var(--text-secondary)] hover:text-[var(--text-primary)] underline cursor-pointer"
+                  >
+                    Fill GS Base
+                  </button>
+                </div>
 
                 <div className="flex gap-2">
                   <button
                     type="button"
-                    onClick={() => setShowCoordModal(false)}
-                    className="bg-[#1D2026] text-[#9F8E78] px-3 py-1 text-xs cursor-pointer hover:text-[#E1E2EB]"
+                    onClick={() => setShowTargetModal(false)}
+                    className="bg-[var(--bg-surface-2)] text-[var(--text-secondary)] px-3 py-1 text-xs cursor-pointer hover:text-[var(--text-primary)] rounded-[var(--radius-xs)]"
                   >
                     CANCEL
                   </button>
                   <button
                     type="submit"
-                    className="bg-[#38FA87] text-[#001D33] font-bold px-3 py-1 text-xs cursor-pointer hover:bg-[#2DE076] flex items-center gap-1"
+                    className="bg-[var(--status-nominal)] text-[#001D33] font-bold px-3 py-1 text-xs cursor-pointer hover:opacity-90 flex items-center gap-1 rounded-[var(--radius-xs)]"
                   >
                     <Check className="w-3.5 h-3.5" /> APPLY
                   </button>

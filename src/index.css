@@ -188,3 +188,30 @@ select:focus-visible {
   outline-offset: 1px;
 }
 
+/* Leaflet map controls dark aerospace styling */
+.leaflet-control-attribution {
+  background: rgba(14, 20, 27, 0.85) !important;
+  color: var(--text-tertiary) !important;
+  font-family: var(--font-mono) !important;
+  font-size: 9px !important;
+  padding: 1px 6px !important;
+  border-top-left-radius: var(--radius-xs);
+  border: 1px solid var(--border-subtle) !important;
+  border-right: none !important;
+  border-bottom: none !important;
+}
+
+.leaflet-control-attribution a {
+  color: var(--status-info) !important;
+}
+
+.leaflet-control-scale-line {
+  background: rgba(14, 20, 27, 0.85) !important;
+  color: var(--text-secondary) !important;
+  border: 1px solid var(--border-subtle) !important;
+  border-top: none !important;
+  font-family: var(--font-mono) !important;
+  font-size: 9px !important;
+  padding: 1px 4px !important;
+}
+

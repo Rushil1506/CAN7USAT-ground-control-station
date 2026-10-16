@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Settings as SettingsIcon, X, Volume2, Radio, Info } from 'lucide-react';
+import { Settings as SettingsIcon, X, Volume2, Radio, Sliders, ShieldAlert, RotateCcw, Check } from 'lucide-react';
 import { TEAM_INFO } from '../constants';
 
 interface SettingsModalProps {
@@ -15,115 +15,256 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose })
 
   if (!isOpen) return null;
 
+  const trimmedCallsign = callsign.trim();
+  const isCallsignValid = /^[A-Za-z0-9_-]{3,40}$/.test(trimmedCallsign);
+  const validationError = !trimmedCallsign
+    ? 'Team Net ID cannot be empty.'
+    : !isCallsignValid
+    ? 'Use 3–40 alphanumeric characters, hyphens (-), or underscores (_).'
+    : null;
+
+  const handleResetDefaults = () => {
+    setCallsign(TEAM_INFO.id);
+    setTelemetryRate(10);
+    setUnitSystem('METRIC');
+    setSoundEnabled(true);
+  };
+
+  const handleApplyAndClose = () => {
+    if (validationError) return;
+    setCallsign(trimmedCallsign);
+    onClose();
+  };
+
   return (
-    <div className="fixed inset-0 z-50 bg-[#0B0E14]/80 backdrop-blur-md flex items-center justify-center p-4 select-none">
-      <div className="bg-[#161B22] border border-[#524533] w-full max-w-lg p-5 shadow-2xl relative flex flex-col gap-4 font-mono-data text-xs">
-        {/* Header */}
-        <div className="flex justify-between items-center border-b border-[#524533] pb-3">
-          <div className="flex items-center gap-2 text-[#FFD597]">
-            <SettingsIcon className="w-5 h-5" />
-            <h3 className="font-bold uppercase tracking-wider text-sm">
-              GROUND STATION & TEAM HARDWARE CONFIGURATION
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="settings-modal-title"
+      className="fixed inset-0 z-50 bg-[#000000]/75 backdrop-blur-xs flex items-center justify-center p-4 select-none"
+    >
+      <div className="bg-[var(--bg-surface-1)] border border-[var(--border-focus)] rounded-[var(--radius-md)] w-full max-w-xl shadow-2xl relative flex flex-col max-h-[90vh] overflow-hidden font-mono-data text-xs">
+        {/* Modal Header */}
+        <div className="flex justify-between items-center px-4 py-3 bg-[var(--bg-surface-2)] border-b border-[var(--border-subtle)] shrink-0">
+          <div className="flex items-center gap-2">
+            <SettingsIcon className="w-4 h-4 text-[var(--action-amber)]" />
+            <h3 id="settings-modal-title" className="font-bold uppercase tracking-wider text-xs sm:text-sm text-[var(--text-primary)]">
+              GROUND STATION & MISSION PROFILE CONFIGURATION
             </h3>
           </div>
-          <button onClick={onClose} className="text-[#9F8E78] hover:text-[#E1E2EB] cursor-pointer">
-            <X className="w-5 h-5" />
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close Settings Modal"
+            className="text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer p-1"
+          >
+            <X className="w-4 h-4" />
           </button>
         </div>
 
-        {/* Team Metadata Box */}
-        <div className="bg-[#0B0E14] border border-[#272A31] p-3 space-y-1 text-[11px] text-[#D7C4AC]">
-          <div className="text-[#FFD597] font-bold">{TEAM_INFO.name} ({TEAM_INFO.id})</div>
-          <div>Institution: {TEAM_INFO.institution}</div>
-          <div>Faculty Mentor: {TEAM_INFO.facultyAdvisor}</div>
-          <div className="text-[10px] text-[#9F8E78] pt-1 border-t border-[#272A31]">
-            Team Members: {TEAM_INFO.members.join(', ')}
+        {/* Scrollable Content Body */}
+        <div className="p-4 overflow-y-auto flex flex-col gap-4">
+          {/* Section 1: Read-Only Competition & Team Metadata */}
+          <div className="bg-[var(--bg-base)] border border-[var(--border-subtle)] rounded-[var(--radius-sm)] p-3 space-y-1.5 text-[11px]">
+            <div className="flex flex-wrap justify-between items-center gap-2 border-b border-[var(--border-muted)] pb-1.5">
+              <span className="text-[var(--action-amber)] font-bold">
+                {TEAM_INFO.name} — {TEAM_INFO.id}
+              </span>
+              <span className="text-[9px] px-1.5 py-0.5 bg-[var(--bg-surface-2)] text-[var(--text-secondary)] border border-[var(--border-subtle)] rounded-[var(--radius-xs)]">
+                PDR ID: {TEAM_INFO.pdrId}
+              </span>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-1 text-[var(--text-secondary)] text-[10px]">
+              <div>
+                <span className="text-[var(--text-tertiary)]">INSTITUTION:</span> {TEAM_INFO.institution}
+              </div>
+              <div>
+                <span className="text-[var(--text-tertiary)]">ADVISOR:</span> {TEAM_INFO.facultyAdvisor}
+              </div>
+            </div>
+            <div className="text-[10px] text-[var(--text-tertiary)] pt-1 border-t border-[var(--border-muted)] leading-relaxed">
+              <span className="text-[var(--text-secondary)] font-semibold">ROSTER:</span> {TEAM_INFO.members.join(', ')}
+            </div>
+          </div>
+
+          {/* Section 2: Intended Hardware / Link Parameters (Unimplemented on Hardware) */}
+          <div className="flex flex-col gap-3 border border-[var(--border-subtle)] bg-[var(--bg-surface-2)]/50 rounded-[var(--radius-sm)] p-3">
+            <div className="flex flex-wrap items-center justify-between gap-1 border-b border-[var(--border-subtle)] pb-1.5">
+              <span className="flex items-center gap-1.5 text-[11px] font-bold text-[var(--text-primary)] uppercase">
+                <Radio className="w-3.5 h-3.5 text-[var(--status-info)]" />
+                INTENDED RF / HARDWARE PROFILE
+              </span>
+              <span className="text-[9px] px-1.5 py-0.5 bg-[var(--bg-base)] text-[var(--action-amber)] border border-[var(--border-subtle)] rounded-[var(--radius-xs)] uppercase">
+                PROFILE ONLY — NO HARDWARE DRIVER
+              </span>
+            </div>
+
+            {/* Mission Callsign / Team Net ID */}
+            <div className="flex flex-col gap-1">
+              <div className="flex justify-between items-center text-[10px]">
+                <label htmlFor="settings-callsign-input" className="text-[var(--text-secondary)] uppercase font-semibold">
+                  TEAM NET ID / PACKET HEADER ID
+                </label>
+                <span className="text-[9px] text-[var(--text-tertiary)]">LOCAL PROFILE</span>
+              </div>
+              <input
+                id="settings-callsign-input"
+                type="text"
+                value={callsign}
+                onChange={(e) => setCallsign(e.target.value)}
+                className={`bg-[var(--bg-base)] border px-2.5 py-1.5 text-xs text-[var(--text-primary)] outline-none rounded-[var(--radius-xs)] ${
+                  validationError
+                    ? 'border-[var(--status-alert)] focus:border-[var(--status-alert)]'
+                    : 'border-[var(--border-subtle)] focus:border-[var(--border-amber)]'
+                }`}
+              />
+              {validationError ? (
+                <div className="flex items-center gap-1 text-[10px] text-[var(--status-alert)] mt-0.5">
+                  <ShieldAlert className="w-3 h-3 shrink-0" />
+                  <span>{validationError}</span>
+                </div>
+              ) : (
+                <span className="text-[9px] text-[var(--text-tertiary)]">
+                  Editing this field does not reprogram the physical transceiver or alter the simulator&apos;s hardcoded teamId.
+                </span>
+              )}
+            </div>
+
+            {/* Target LoRa Sample Rate */}
+            <div className="flex flex-col gap-1">
+              <div className="flex justify-between items-center text-[10px]">
+                <span className="text-[var(--text-secondary)] uppercase font-semibold">
+                  TARGET LORA SAMPLE RATE (Hz)
+                </span>
+                <span className="text-[9px] text-[var(--status-info)]">SIMULATOR FIXED @ 10 Hz</span>
+              </div>
+              <div className="grid grid-cols-4 gap-1.5">
+                {[1, 5, 10, 20].map((rate) => (
+                  <button
+                    key={rate}
+                    type="button"
+                    onClick={() => setTelemetryRate(rate)}
+                    className={`py-1.5 border uppercase cursor-pointer rounded-[var(--radius-xs)] text-[11px] tabular-nums transition-colors ${
+                      telemetryRate === rate
+                        ? 'bg-[var(--action-amber)] text-[var(--action-amber-contrast)] font-bold border-[var(--border-amber)]'
+                        : 'bg-[var(--bg-base)] text-[var(--text-secondary)] border-[var(--border-subtle)] hover:text-[var(--text-primary)]'
+                    }`}
+                  >
+                    {rate} Hz {rate === 10 ? '(SIM)' : ''}
+                  </button>
+                ))}
+              </div>
+              <span className="text-[9px] text-[var(--text-tertiary)]">
+                Records intended RF rate preference only. Does not reconfigure LoRa hardware or change the 10 Hz simulator tick.
+              </span>
+            </div>
+          </div>
+
+          {/* Section 3: Local Presentation & Console Preferences */}
+          <div className="flex flex-col gap-3 border border-[var(--border-subtle)] bg-[var(--bg-surface-2)]/50 rounded-[var(--radius-sm)] p-3">
+            <div className="flex flex-wrap items-center justify-between gap-1 border-b border-[var(--border-subtle)] pb-1.5">
+              <span className="flex items-center gap-1.5 text-[11px] font-bold text-[var(--text-primary)] uppercase">
+                <Sliders className="w-3.5 h-3.5 text-[var(--text-secondary)]" />
+                CONSOLE PRESENTATION PREFERENCES
+              </span>
+              <span className="text-[9px] px-1.5 py-0.5 bg-[var(--bg-base)] text-[var(--text-secondary)] border border-[var(--border-subtle)] rounded-[var(--radius-xs)] uppercase">
+                LOCAL DIALOG STATE
+              </span>
+            </div>
+
+            {/* Unit System */}
+            <div className="flex flex-col gap-1">
+              <div className="flex justify-between items-center text-[10px]">
+                <span className="text-[var(--text-secondary)] uppercase font-semibold">UNIT DISPLAY SYSTEM</span>
+                <span className="text-[9px] text-[var(--status-nominal)]">PANELS USE SI METRIC</span>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => setUnitSystem('METRIC')}
+                  className={`py-1.5 px-2 border uppercase cursor-pointer rounded-[var(--radius-xs)] text-[10px] transition-colors ${
+                    unitSystem === 'METRIC'
+                      ? 'bg-[var(--status-info)] text-[var(--text-inverted)] font-bold border-[var(--status-info)]'
+                      : 'bg-[var(--bg-base)] text-[var(--text-secondary)] border-[var(--border-subtle)] hover:text-[var(--text-primary)]'
+                  }`}
+                >
+                  METRIC (m, m/s, °C, hPa) [ACTIVE]
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setUnitSystem('IMPERIAL')}
+                  className={`py-1.5 px-2 border uppercase cursor-pointer rounded-[var(--radius-xs)] text-[10px] transition-colors ${
+                    unitSystem === 'IMPERIAL'
+                      ? 'bg-[var(--status-info)] text-[var(--text-inverted)] font-bold border-[var(--status-info)]'
+                      : 'bg-[var(--bg-base)] text-[var(--text-secondary)] border-[var(--border-subtle)] hover:text-[var(--text-primary)]'
+                  }`}
+                >
+                  IMPERIAL (UNIMPLEMENTED IN PANELS)
+                </button>
+              </div>
+              <span className="text-[9px] text-[var(--text-tertiary)]">
+                IN-SPACe PDR specification mandates SI Metric telemetry. Imperial conversion is not wired to charts or readouts.
+              </span>
+            </div>
+
+            {/* Sound Alerts */}
+            <div className="flex flex-col gap-1">
+              <div className="flex justify-between items-center p-2 bg-[var(--bg-base)] border border-[var(--border-subtle)] rounded-[var(--radius-xs)]">
+                <div className="flex flex-col gap-0.5 pr-2">
+                  <span className="text-[var(--text-primary)] font-semibold flex items-center gap-1.5 text-[11px]">
+                    <Volume2 className="w-3.5 h-3.5 text-[var(--status-nominal)] shrink-0" />
+                    CONSOLE AUDIO ALERT PREFERENCE
+                  </span>
+                  <span className="text-[9px] text-[var(--text-tertiary)]">
+                    Local UI toggle only — no browser audio synthesis or hardware buzzer control is active.
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setSoundEnabled(!soundEnabled)}
+                  className={`px-3 py-1 font-bold text-[10px] cursor-pointer rounded-[var(--radius-xs)] border shrink-0 transition-colors ${
+                    soundEnabled
+                      ? 'bg-[var(--status-nominal-bg)] text-[var(--status-nominal)] border-[var(--status-nominal)]/40'
+                      : 'bg-[var(--bg-surface-2)] text-[var(--text-tertiary)] border-[var(--border-subtle)]'
+                  }`}
+                >
+                  {soundEnabled ? 'ENABLED (UI)' : 'MUTED (UI)'}
+                </button>
+              </div>
+            </div>
           </div>
         </div>
 
-        {/* Form Fields */}
-        <div className="flex flex-col gap-3">
-          {/* Mission Callsign */}
-          <div className="flex flex-col gap-1">
-            <label className="text-[#9F8E78] uppercase">UNIQUE TEAM IDENTIFIER (NET ID / PAN ID):</label>
-            <input
-              type="text"
-              value={callsign}
-              onChange={(e) => setCallsign(e.target.value)}
-              className="bg-[#0B0E14] border border-[#524533] text-[#E1E2EB] px-3 py-1.5 outline-none focus:border-[#FFD597]"
-            />
-          </div>
+        {/* Modal Footer */}
+        <div className="flex justify-between items-center gap-3 px-4 py-3 bg-[var(--bg-surface-2)] border-t border-[var(--border-subtle)] shrink-0">
+          <button
+            type="button"
+            onClick={handleResetDefaults}
+            className="px-3 py-1.5 bg-[var(--bg-base)] hover:bg-[var(--bg-surface-hover)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] border border-[var(--border-subtle)] rounded-[var(--radius-sm)] cursor-pointer flex items-center gap-1.5 text-[11px]"
+          >
+            <RotateCcw className="w-3.5 h-3.5" />
+            <span>RESET DEFAULTS</span>
+          </button>
 
-          {/* Telemetry Refresh Rate */}
-          <div className="flex flex-col gap-1">
-            <label className="text-[#9F8E78] uppercase">LORA TELEMETRY SAMPLE RATE (Hz):</label>
-            <div className="grid grid-cols-4 gap-2">
-              {[1, 5, 10, 20].map((rate) => (
-                <button
-                  key={rate}
-                  onClick={() => setTelemetryRate(rate)}
-                  className={`py-1.5 border uppercase cursor-pointer ${
-                    telemetryRate === rate
-                      ? 'bg-[#FFB000] text-[#000] font-bold border-[#FFB000]'
-                      : 'bg-[#1D2026] text-[#D7C4AC] border-[#2A2E35] hover:bg-[#272A31]'
-                  }`}
-                >
-                  {rate} Hz
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* Unit System */}
-          <div className="flex flex-col gap-1">
-            <label className="text-[#9F8E78] uppercase">UNIT DISPLAY SYSTEM:</label>
-            <div className="grid grid-cols-2 gap-2">
-              <button
-                onClick={() => setUnitSystem('METRIC')}
-                className={`py-1.5 border uppercase cursor-pointer ${
-                  unitSystem === 'METRIC'
-                    ? 'bg-[#00A2FD] text-[#001D33] font-bold border-[#00A2FD]'
-                    : 'bg-[#1D2026] text-[#D7C4AC] border-[#2A2E35]'
-                }`}
-              >
-                METRIC (m, m/s, °C, hPa)
-              </button>
-              <button
-                onClick={() => setUnitSystem('IMPERIAL')}
-                className={`py-1.5 border uppercase cursor-pointer ${
-                  unitSystem === 'IMPERIAL'
-                    ? 'bg-[#00A2FD] text-[#001D33] font-bold border-[#00A2FD]'
-                    : 'bg-[#1D2026] text-[#D7C4AC] border-[#2A2E35]'
-                }`}
-              >
-                IMPERIAL (ft, ft/s, °F, psi)
-              </button>
-            </div>
-          </div>
-
-          {/* Sound Alerts */}
-          <div className="flex justify-between items-center p-2 bg-[#0B0E14] border border-[#2A2E35]">
-            <span className="text-[#D7C4AC] flex items-center gap-2">
-              <Volume2 className="w-4 h-4 text-[#38FA87]" /> RECOVERY AUDIO BEACON STATUS BEEP
-            </span>
+          <div className="flex items-center gap-2">
             <button
-              onClick={() => setSoundEnabled(!soundEnabled)}
-              className={`px-3 py-1 font-bold cursor-pointer ${
-                soundEnabled ? 'bg-[#38FA87] text-[#003918]' : 'bg-[#32353C] text-[#9F8E78]'
-              }`}
+              type="button"
+              onClick={onClose}
+              className="px-3.5 py-1.5 bg-[var(--bg-base)] hover:bg-[var(--bg-surface-hover)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] border border-[var(--border-subtle)] rounded-[var(--radius-sm)] cursor-pointer text-[11px] uppercase"
             >
-              {soundEnabled ? 'ENABLED' : 'MUTED'}
+              CANCEL
+            </button>
+            <button
+              type="button"
+              onClick={handleApplyAndClose}
+              disabled={Boolean(validationError)}
+              className="go-button font-bold px-4 py-1.5 text-[11px] uppercase cursor-pointer rounded-[var(--radius-sm)] flex items-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              <Check className="w-3.5 h-3.5" />
+              <span>APPLY LOCAL PROFILE</span>
             </button>
           </div>
         </div>
-
-        {/* Save Button */}
-        <button
-          onClick={onClose}
-          className="bg-[#FFB000] hover:bg-[#FFD597] text-[#000] font-bold py-2.5 uppercase transition-colors cursor-pointer mt-2"
-        >
-          SAVE CONFIGURATION
-        </button>
       </div>
     </div>
   );
