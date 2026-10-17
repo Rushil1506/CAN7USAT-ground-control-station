@@ -1,5 +1,6 @@
 import { BASE_GPS, TEAM_INFO } from '../constants';
 import { FlightStateCode, TelemetryPacket } from '../types';
+import { convertGnssUtcToIst } from './telemetryParser';
 
 export class TelemetryEngine {
   private packetCount: number = 1240;
@@ -299,10 +300,14 @@ export class TelemetryEngine {
     const utcTimeStr = now.toISOString().split('T')[1].slice(0, 8);
 
     return {
+      source: 'SIMULATION',
+      receivedAtMs: now.getTime(),
+      receivedAtTimeStr: utcTimeStr,
       teamId: TEAM_INFO.id,
       packetNumber: this.packetCount,
       missionTimeSeconds: Math.floor(t * 10) / 10,
       timestampUtc: utcTimeStr,
+      gnssTimeIst: convertGnssUtcToIst(utcTimeStr),
       altitude: Math.round(altitude * 10) / 10,
       velocity: Math.round(velocity * 10) / 10,
       acceleration: Math.round(totalAccelG * 100) / 100,
@@ -319,12 +324,17 @@ export class TelemetryEngine {
       gpsAltitude: Math.round(altitude + this.baseGps.altitude),
       gpsSats: 12,
       gpsFixType: '3D',
+      gpsValid: true,
+      rawLatitude: latitude,
+      rawLongitude: longitude,
+      rawGpsAltitude: Math.round(altitude + this.baseGps.altitude),
       co2: Math.round(co2Ppm * 10) / 10,
       pm2_5: Math.round(pm2_5 * 10) / 10,
       uv: Math.round(uvIndex * 10) / 10,
       humidity: Math.round(humidityPercent * 10) / 10,
       temperature: Math.round(temperatureC * 10) / 10,
       pressure: Math.round(pressureHpa * 10) / 10,
+      rawPressurePa: Math.round(pressureHpa * 100),
       batteryVoltage: Math.round(batteryVoltage * 100) / 100,
       currentDraw: Math.round(currentDraw * 100) / 100,
       power: Math.round(powerW * 100) / 100,
@@ -342,10 +352,10 @@ export class TelemetryEngine {
 
   // Exact 2026 PDR Telemetry string format
   private formatPdrTelemetrySentence(p: TelemetryPacket): string {
-    const accelStr = `${p.accelX}:${p.accelY}:${p.accelZ}`;
-    const optionalStr = `CO2=${p.co2};PM=${p.pm2_5};UV=${p.uv};RH=${p.humidity};RPM=${p.wheelRpm};I=${p.currentDraw}A`;
+    const accelStr = `${p.accelX ?? 0}:${p.accelY ?? 0}:${p.accelZ ?? 0}`;
+    const optionalStr = `CO2=${p.co2 ?? 0};PM=${p.pm2_5 ?? 0};UV=${p.uv ?? 0};RH=${p.humidity ?? 0};RPM=${p.wheelRpm ?? 0};I=${p.currentDraw ?? 0}A`;
 
-    return `${p.teamId},${p.missionTimeSeconds.toFixed(1)},${p.packetNumber},${p.altitude.toFixed(2)},${p.pressure.toFixed(2)},${p.temperature.toFixed(2)},${p.batteryVoltage.toFixed(2)},${p.timestampUtc},${p.latitude.toFixed(6)},${p.longitude.toFixed(6)},${p.gpsAltitude.toFixed(2)},${p.gpsSats},${accelStr},${p.spinRate.toFixed(2)},${p.stateCode},${optionalStr}`;
+    return `${p.teamId},${p.missionTimeSeconds.toFixed(1)},${p.packetNumber},${(p.altitude ?? 0).toFixed(2)},${(p.pressure ?? 0).toFixed(2)},${(p.temperature ?? 0).toFixed(2)},${(p.batteryVoltage ?? 0).toFixed(2)},${p.timestampUtc},${(p.latitude ?? 0).toFixed(6)},${(p.longitude ?? 0).toFixed(6)},${(p.gpsAltitude ?? 0).toFixed(2)},${p.gpsSats ?? 0},${accelStr},${(p.spinRate ?? 0).toFixed(2)},${p.stateCode ?? 0},${optionalStr}`;
   }
 }
 

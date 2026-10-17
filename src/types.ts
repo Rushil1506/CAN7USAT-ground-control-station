@@ -23,59 +23,99 @@ export interface FlightStateInfo {
   bgGlow: string;
 }
 
+export type TelemetrySource = 'SIMULATION' | 'LIVE_SERIAL';
+
+export type SerialConnectionState =
+  | 'DISCONNECTED'
+  | 'CONNECTING'
+  | 'CONNECTED'
+  | 'ERROR'
+  | 'UNSUPPORTED';
+
+export interface SerialMetrics {
+  rawBytesReceived: number;
+  completeLinesReceived: number;
+  validPacketsReceived: number;
+  malformedPacketsReceived: number;
+  connectionErrors: number;
+  lastValidPacketTimeMs: number | null;
+  lastValidPacketRxTime?: string | null; // Computer packet-reception time-of-day (UTC), separate from GNSS time
+  lastValidPacketUtc: string | null;     // Raw received GNSS UTC time-of-day (HH:MM:SS)
+  lastValidPacketIst?: string | null;    // Converted GNSS IST time-of-day (HH:MM:SS, +05:30)
+  lastError: string | null;
+  portLabel: string | null;
+}
+
+export interface RawLogEntry {
+  time: string;
+  text: string;
+  type: 'rx' | 'tx' | 'sys' | 'err';
+  source?: TelemetrySource;
+}
+
 export interface TelemetryPacket {
-  teamId: string;            // "2026-INSPACe-CAN-7USAT-332"
+  source?: TelemetrySource;
+  receivedAtMs?: number;
+  receivedAtTimeStr?: string; // Computer packet-reception time-of-day (UTC), kept separate from GNSS time
+
+  teamId: string;            // "2026-IN-SPACe-CAN-7USAT-017" (live) or "2026-INSPACe-CAN-7USAT-332" (sim)
   packetNumber: number;
   missionTimeSeconds: number; // Seconds since launch
-  timestampUtc: string;
+  timestampUtc: string;       // Exact raw GNSS time string as received (HH:MM:SS, UTC time-of-day only, no date)
+  gnssTimeIst?: string | null;// GNSS time converted from UTC to IST (+05:30, HH:MM:SS time-of-day only, no date)
   
   // Primary Telemetry (MS5611 Barometer / GY-SHT40)
-  altitude: number;          // meters AGL
-  velocity: number;          // m/s descent/ascent rate
-  acceleration: number;      // total Gs (BNO055)
-  accelX: number;
-  accelY: number;
-  accelZ: number;
-  spinRate: number;          // deg/s pitch/roll dampening precession (~3.18 deg/s)
+  altitude: number | null;          // meters AGL
+  velocity: number | null;          // m/s descent/ascent rate (null when not transmitted)
+  acceleration: number | null;      // total Gs (null when not transmitted)
+  accelX: number | null;
+  accelY: number | null;
+  accelZ: number | null;
+  spinRate: number | null;          // deg/s
   
   // Z-Axis Momentum Bias Wheel (DCS Stabilization)
-  wheelRpm: number;          // RPM (MT2204 + 63.4g brass flywheel, 0 - 12,000 RPM)
+  wheelRpm: number | null;          // RPM (null when not transmitted)
 
   // 6-DOF Orientation (BNO055 IMU)
-  roll: number;              // degrees
-  pitch: number;             // degrees
-  yaw: number;               // degrees
+  roll: number | null;              // degrees
+  pitch: number | null;             // degrees
+  yaw: number | null;               // degrees (null when not transmitted)
   
   // GNSS Data (NEO-M9N)
-  latitude: number;          // ° N
-  longitude: number;         // ° E
-  gpsAltitude: number;       // m AMSL
-  gpsSats: number;           // Satellites locked
+  latitude: number | null;          // ° N (null when GPS invalid)
+  longitude: number | null;         // ° E (null when GPS invalid)
+  gpsAltitude: number | null;       // m AMSL (null when GPS invalid)
+  gpsSats: number | null;           // Satellites in view
   gpsFixType: 'NO_FIX' | '2D' | '3D';
+  gpsValid?: boolean;
+  rawLatitude?: number | null;
+  rawLongitude?: number | null;
+  rawGpsAltitude?: number | null;
   
   // Environmental & Air Quality Sensors (Bonus Objectives)
-  co2: number;               // SCD40 CO2 concentration in ppm
-  pm2_5: number;             // SPS30 particulate matter in µg/m³
-  uv: number;                // LTR390 UV Index
-  humidity: number;          // GY-SHT40 %RH
+  co2: number | null;               // SCD40 CO2 concentration in ppm
+  pm2_5: number | null;             // SPS30 particulate matter in µg/m³
+  uv: number | null;                // LTR390 UV Index
+  humidity: number | null;          // GY-SHT40 %RH
   
-  // Electrical Power Subsystem (2S Molicel INR-18650-P30B + ACS712)
-  temperature: number;       // °C (GY-SHT40)
-  pressure: number;          // hPa / kPa
-  batteryVoltage: number;    // Volts (6.4V - 8.4V)
-  currentDraw: number;       // Amps (ACS712)
-  power: number;             // Watts
-  batterySoc: number;        // State of Charge %
-  rssi: number;              // dBm (LoRa Zeminet 865MHz)
+  // Electrical Power Subsystem
+  temperature: number | null;       // °C
+  pressure: number | null;          // hPa (converted from Pa in live serial)
+  rawPressurePa?: number | null;    // Raw Pascals from live serial stream
+  batteryVoltage: number | null;    // Volts
+  currentDraw: number | null;       // Amps
+  power: number | null;             // Watts
+  batterySoc: number | null;        // State of Charge %
+  rssi: number | null;              // dBm
   
   // Flight Software State & Flags
-  stateCode: FlightStateCode;
+  stateCode: FlightStateCode | null;
   fswStateName: string;
-  l1Connected: boolean;      // Zeminet 865MHz LoRa
-  l2Connected: boolean;      // Digi XBee 2.4GHz backup
-  deployed: boolean;         // Disreefed parachute active
-  audioBeaconActive: boolean;// 92dB recovery buzzer
-  gsmModuleActive: boolean;  // Recovery SMS active
+  l1Connected: boolean;             // Primary LoRa link
+  l2Connected: boolean | null;      // Backup link
+  deployed: boolean | null;         // Disreefed parachute active
+  audioBeaconActive: boolean | null;// 92dB recovery buzzer
+  gsmModuleActive: boolean | null;  // Recovery SMS active
 }
 
 export interface SerialConfig {
@@ -91,4 +131,10 @@ export interface ChartTimeframe {
   seconds: number;
 }
 
-export type ActiveTab = 'MISSION' | 'TELEMETRY' | 'GPS_MAP' | 'CHECKLIST' | 'ANALYTICS';
+export type ActiveTab =
+  | 'OVERVIEW'
+  | 'LANDING_PREDICTOR'
+  | 'TELEMETRY'
+  | 'ATTITUDE_SENSORS'
+  | 'COMMS_LOGS';
+

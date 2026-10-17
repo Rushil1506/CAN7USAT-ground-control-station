@@ -1,17 +1,33 @@
 import React, { useState } from 'react';
-import { ClipboardCheck, CheckCircle2, AlertOctagon, Rocket, ShieldCheck, Cpu, Battery, Radio, Volume2 } from 'lucide-react';
-import { TelemetryPacket } from '../types';
+import {
+  AlertOctagon,
+  Battery,
+  CheckCircle2,
+  ClipboardCheck,
+  Cpu,
+  Radio,
+  Rocket,
+  ShieldCheck,
+  Volume2,
+} from 'lucide-react';
+import { TelemetryPacket, TelemetrySource } from '../types';
 
 interface PreflightChecklistPanelProps {
   latestPacket: TelemetryPacket | null;
+  telemetrySource?: TelemetrySource;
   onStartLaunch: () => void;
 }
 
+const isValidNum = (val: unknown): val is number =>
+  typeof val === 'number' && Number.isFinite(val);
+
 export const PreflightChecklistPanel: React.FC<PreflightChecklistPanelProps> = ({
   latestPacket,
+  telemetrySource = 'SIMULATION',
   onStartLaunch,
 }) => {
   const p = latestPacket;
+  const isSim = telemetrySource === 'SIMULATION';
 
   const [checkedItems, setCheckedItems] = useState<Record<number, boolean>>({
     1: true,
@@ -24,70 +40,121 @@ export const PreflightChecklistPanel: React.FC<PreflightChecklistPanelProps> = (
     8: true,
   });
 
+  // Never use `||` fallbacks that turn 0 readings into nominal values
+  const hasGpsLock = Boolean(
+    p && p.gpsValid && isValidNum(p.gpsSats) && p.gpsSats >= 4
+  );
+  const gpsStatusText = !p
+    ? 'AWAITING TELEMETRY'
+    : hasGpsLock
+    ? `LOCKED (${p.gpsSats} SATS)`
+    : `NO LOCK (${isValidNum(p.gpsSats) ? p.gpsSats : 0} SATS)`;
+
+  const hasValidBaro = Boolean(
+    p &&
+      isValidNum(p.pressure) &&
+      p.pressure > 100 &&
+      isValidNum(p.temperature)
+  );
+  const baroStatusText = !p
+    ? 'AWAITING TELEMETRY'
+    : isValidNum(p.pressure) && isValidNum(p.temperature)
+    ? `${p.pressure.toFixed(1)} hPa / ${p.temperature.toFixed(1)}°C${
+        p.pressure <= 100 ? ' (UNINITIALIZED)' : ''
+      }`
+    : 'UNAVAILABLE';
+
+  const hasValidBatt = Boolean(
+    p && isValidNum(p.batteryVoltage) && p.batteryVoltage >= 7.0
+  );
+  const battStatusText = !p
+    ? 'AWAITING TELEMETRY'
+    : isValidNum(p.batteryVoltage)
+    ? `${p.batteryVoltage.toFixed(2)}V${
+        isValidNum(p.batterySoc) ? ` (${p.batterySoc.toFixed(0)}%)` : ''
+      }${p.batteryVoltage < 7.0 ? ' (LOW / ZERO)' : ''}`
+    : 'UNAVAILABLE';
+
+  const hasWheelTelemetry = Boolean(p && isValidNum(p.wheelRpm));
+  const wheelStatusText = hasWheelTelemetry
+    ? `${Math.round(p!.wheelRpm!).toLocaleString()} RPM`
+    : isSim
+    ? 'AWAITING SIM'
+    : 'NOT IN LIVE CSV';
+
   const checklistSpecs = [
     {
       id: 1,
       title: 'GNSS 3D Fix & Satellite Lock',
-      requirement: 'NEO-M9N GNSS Receiver >= 4 Satellites (SBAS 1m CEP)',
-      status: (p?.gpsSats || 12) >= 4 ? `LOCKED (${p?.gpsSats || 12} SATS)` : 'NO LOCK',
-      pass: (p?.gpsSats || 12) >= 4,
-      icon: <Radio className="w-4 h-4 text-[#00A2FD]" />,
+      requirement:
+        'NEO-M9N GNSS Receiver >= 4 Satellites with valid non-zero coordinates',
+      status: gpsStatusText,
+      pass: hasGpsLock,
+      icon: <Radio className="w-4 h-4 text-[var(--accent-cobalt)]" />,
     },
     {
       id: 2,
       title: 'MS5611 Barometer & GY-SHT40 Calibration',
-      requirement: 'Zero baseline pressure & air temperature verified',
-      status: p ? `${p.pressure.toFixed(1)} hPa / ${p.temperature.toFixed(1)}°C` : 'READY',
-      pass: true,
-      icon: <Cpu className="w-4 h-4 text-[#FFD597]" />,
+      requirement:
+        'Non-zero atmospheric pressure (> 100 hPa) & air temperature verified',
+      status: baroStatusText,
+      pass: hasValidBaro,
+      icon: <Cpu className="w-4 h-4 text-[var(--accent-teal)]" />,
     },
     {
       id: 3,
       title: '2S Molicel INR-18650-P30B Battery Pack',
-      requirement: 'Pack Voltage >= 7.2V (Capacity Margin > 1700 mAh)',
-      status: p ? `${p.batteryVoltage.toFixed(2)}V (${p.batterySoc.toFixed(0)}%)` : '8.2V OK',
-      pass: (p?.batteryVoltage || 8.0) >= 7.0,
-      icon: <Battery className="w-4 h-4 text-[#38FA87]" />,
+      requirement: 'Pack Voltage >= 7.0V (Capacity Margin > 1700 mAh)',
+      status: battStatusText,
+      pass: hasValidBatt,
+      icon: <Battery className="w-4 h-4 text-[var(--status-nominal)]" />,
     },
     {
       id: 4,
       title: 'Onboard MicroSD Card Data Logging',
       requirement: 'Teensy 4.1 microSD slot mounted and writable for flight backup',
-      status: 'MOUNTED (CSV LOGGING)',
+      status: isSim ? 'MOUNTED (SIMULATED)' : 'MANUAL VERIFICATION REQUIRED',
       pass: true,
-      icon: <ClipboardCheck className="w-4 h-4 text-[#38FA87]" />,
+      icon: <ClipboardCheck className="w-4 h-4 text-[var(--accent-cobalt)]" />,
     },
     {
       id: 5,
       title: 'Parachute Reefing & Dual Burnwire Circuits',
-      requirement: 'Stage 1 Reefed Parachute line secured & MOSFET burnwires armed',
-      status: 'DUAL MOSFET ARMED',
+      requirement:
+        'Stage 1 Reefed Parachute line secured & MOSFET burnwires armed',
+      status: isSim
+        ? 'DUAL MOSFET ARMED (SIM)'
+        : 'MANUAL VERIFICATION REQUIRED',
       pass: true,
-      icon: <ShieldCheck className="w-4 h-4 text-[#FF5252]" />,
+      icon: <ShieldCheck className="w-4 h-4 text-[var(--status-warning)]" />,
     },
     {
       id: 6,
       title: 'Z-Axis Momentum Bias Wheel Assembly',
-      requirement: 'MT2204 2300KV motor & 63.4g brass flywheel spin test (12,000 RPM)',
-      status: p ? `${p.wheelRpm.toLocaleString()} RPM (~3.18°/s PRECESSION)` : '12,000 RPM OK',
-      pass: true,
-      icon: <Cpu className="w-4 h-4 text-[#38FA87]" />,
+      requirement:
+        'MT2204 2300KV motor & 63.4g brass flywheel spin test (12,000 RPM)',
+      status: wheelStatusText,
+      pass: isSim ? true : hasWheelTelemetry,
+      icon: <Cpu className="w-4 h-4 text-[var(--accent-teal)]" />,
     },
     {
       id: 7,
-      title: 'Zeminet 865MHz LoRa Primary Telemetry Link',
-      requirement: 'Point-to-point link margin > 20 dB (SF7 / BW 125 kHz)',
-      status: '865 MHz LINK MARGIN +69.29 dB',
-      pass: true,
-      icon: <Radio className="w-4 h-4 text-[#38FA87]" />,
+      title: '865MHz LoRa Primary Telemetry Link',
+      requirement: 'Point-to-point telemetry packets actively received',
+      status: p ? `ACTIVE (PKT #${p.packetNumber})` : 'NO PACKETS RECEIVED',
+      pass: Boolean(p),
+      icon: <Radio className="w-4 h-4 text-[var(--status-nominal)]" />,
     },
     {
       id: 8,
       title: 'Audio Beacon (>=92dB) & GSM Recovery Module',
-      requirement: 'Post-touchdown acoustic buzzer & SMS coordinate alert armed',
-      status: 'ARMED FOR TOUCHDOWN',
+      requirement:
+        'Post-touchdown acoustic buzzer & SMS coordinate alert armed',
+      status: isSim
+        ? 'ARMED FOR TOUCHDOWN (SIM)'
+        : 'MANUAL VERIFICATION REQUIRED',
       pass: true,
-      icon: <Volume2 className="w-4 h-4 text-[#FFD597]" />,
+      icon: <Volume2 className="w-4 h-4 text-[var(--accent-cobalt)]" />,
     },
   ];
 
@@ -95,71 +162,85 @@ export const PreflightChecklistPanel: React.FC<PreflightChecklistPanelProps> = (
     setCheckedItems((prev) => ({ ...prev, [id]: !prev[id] }));
   };
 
-  const allGo = checklistSpecs.every((item) => checkedItems[item.id] && item.pass);
+  const allGo = checklistSpecs.every(
+    (item) => checkedItems[item.id] && item.pass
+  );
 
   return (
-    <div className="h-full w-full p-3 sm:p-4 bg-[#10131A] overflow-y-auto font-mono-data text-xs flex flex-col gap-4">
-      {/* Title */}
-      <div className="bg-[#161B22] border border-[#2A2E35] p-3 flex justify-between items-center flex-wrap gap-2">
-        <div>
-          <div className="text-[#FFD597] font-bold text-sm uppercase flex items-center gap-2">
-            <ClipboardCheck className="w-5 h-5 text-[#FFD597]" />
-            PRE-FLIGHT SYSTEMS GO / NO-GO CHECKLIST (PDR VERIFICATION)
-          </div>
-          <div className="text-[#D7C4AC] text-[11px] opacity-80 mt-0.5">
-            Team Parikshit (#2026-INSPACe-CAN-7USAT-332) • Manipal Institute of Technology
+    <div className="ops-card p-3.5 flex flex-col gap-3 select-none">
+      {/* Header */}
+      <div className="flex justify-between items-center flex-wrap gap-2 border-b border-[var(--border-subtle)] pb-2.5">
+        <div className="flex items-center gap-2">
+          <ClipboardCheck className="w-4 h-4 text-[var(--accent-cobalt)]" />
+          <div>
+            <h3 className="text-xs font-bold uppercase tracking-wider text-[var(--text-primary)]">
+              Pre-Flight Go / No-Go Readiness ({isSim ? 'SIMULATION' : 'LIVE SERIAL'})
+            </h3>
+            <p className="text-[11px] text-[var(--text-secondary)]">
+              Automated telemetry verification + manual hardware inspection
+            </p>
           </div>
         </div>
 
-        <div className="flex items-center gap-2">
-          <div
-            className={`px-3 py-1.5 font-bold text-xs uppercase border flex items-center gap-1.5 ${
-              allGo
-                ? 'bg-[#38FA87]/20 text-[#38FA87] border-[#38FA87]'
-                : 'bg-[#FF5252]/20 text-[#FF5252] border-[#FF5252]'
-            }`}
-          >
-            {allGo ? <CheckCircle2 className="w-4 h-4" /> : <AlertOctagon className="w-4 h-4" />}
-            <span>{allGo ? 'ALL SYSTEMS GO FOR LAUNCH' : 'NO-GO: VERIFY ITEMS'}</span>
-          </div>
+        <div
+          className={`px-2.5 py-1 font-mono-data font-bold text-[10px] uppercase border rounded-[var(--radius-xs)] flex items-center gap-1.5 ${
+            allGo
+              ? 'bg-[var(--status-nominal-bg)] text-[var(--status-nominal)] border-[var(--status-nominal)]/30'
+              : 'bg-[var(--status-warning-bg)] text-[var(--status-warning)] border-[var(--status-warning)]/30'
+          }`}
+        >
+          {allGo ? (
+            <CheckCircle2 className="w-3.5 h-3.5" />
+          ) : (
+            <AlertOctagon className="w-3.5 h-3.5" />
+          )}
+          <span>{allGo ? 'ALL CHECKS GO' : 'VERIFY PENDING ITEMS'}</span>
         </div>
       </div>
 
-      {/* Grid of Checklist Items */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5 flex-1">
+      {/* Checklist Items */}
+      <div className="grid grid-cols-1 gap-2 max-h-[340px] overflow-y-auto pr-0.5">
         {checklistSpecs.map((item) => {
           const isChecked = !!checkedItems[item.id];
+          const itemOk = isChecked && item.pass;
           return (
             <div
               key={item.id}
               onClick={() => toggleCheck(item.id)}
-              className={`p-3 border cursor-pointer transition-all flex flex-col justify-between ${
-                isChecked
-                  ? 'bg-[#161B22] border-[#38FA87]/60 hover:border-[#38FA87]'
-                  : 'bg-[#0B0E14] border-[#2A2E35] opacity-75 hover:opacity-100'
+              className={`p-2.5 border rounded-[var(--radius-sm)] cursor-pointer transition-colors flex flex-col justify-between gap-1.5 ${
+                itemOk
+                  ? 'bg-[var(--bg-surface-2)]/70 border-[var(--border-subtle)] hover:border-[var(--status-nominal)]/50'
+                  : 'bg-[var(--status-warning-bg)]/40 border-[var(--status-warning)]/30'
               }`}
             >
-              <div>
-                <div className="flex justify-between items-start mb-1.5">
-                  <div className="flex items-center gap-2 font-bold text-[#E1E2EB]">
-                    {item.icon}
-                    <span>{item.id}. {item.title}</span>
-                  </div>
-                  <input
-                    type="checkbox"
-                    checked={isChecked}
-                    onChange={() => {}}
-                    className="w-4 h-4 accent-[#38FA87] cursor-pointer"
-                  />
+              <div className="flex justify-between items-start gap-2">
+                <div className="flex items-center gap-2 text-xs font-semibold text-[var(--text-primary)]">
+                  {item.icon}
+                  <span>
+                    {item.id}. {item.title}
+                  </span>
                 </div>
-                <div className="text-[#9F8E78] text-[11px] leading-relaxed mb-2">
-                  {item.requirement}
-                </div>
+                <input
+                  type="checkbox"
+                  checked={isChecked}
+                  onChange={() => {}}
+                  className="w-3.5 h-3.5 accent-[var(--accent-cobalt)] cursor-pointer mt-0.5"
+                />
               </div>
 
-              <div className="flex justify-between items-center pt-2 border-t border-[#272A31] text-[10px]">
-                <span className="text-[#9F8E78]">STATUS:</span>
-                <span className={`font-bold ${isChecked ? 'text-[#38FA87]' : 'text-[#FF5252]'}`}>
+              <div className="text-[11px] text-[var(--text-secondary)] leading-snug">
+                {item.requirement}
+              </div>
+
+              <div className="flex justify-between items-center pt-1.5 border-t border-[var(--border-subtle)] font-mono-data text-[10px]">
+                <span className="text-[var(--text-tertiary)]">TELEMETRY / CHECK:</span>
+                <span
+                  className={`font-bold ${
+                    itemOk
+                      ? 'text-[var(--status-nominal)]'
+                      : 'text-[var(--status-warning)]'
+                  }`}
+                >
                   {item.status}
                 </span>
               </div>
@@ -168,22 +249,27 @@ export const PreflightChecklistPanel: React.FC<PreflightChecklistPanelProps> = (
         })}
       </div>
 
-      {/* Launch Trigger Button */}
-      <div className="bg-[#161B22] border border-[#2A2E35] p-3 flex justify-between items-center">
-        <div className="text-[#D7C4AC] text-xs">
-          Ready to initiate 20s rocket boost launch phase to 1000m AGL?
+      {/* Launch Trigger Button (Simulation Only) */}
+      <div className="bg-[var(--bg-surface-2)] border border-[var(--border-subtle)] rounded-[var(--radius-sm)] p-2.5 flex justify-between items-center gap-2 flex-wrap">
+        <div className="text-[11px] text-[var(--text-secondary)]">
+          {isSim
+            ? 'Initiate simulated 20s rocket boost launch phase to 1000m AGL'
+            : 'Simulated launch trigger disabled in Live Serial receive-only mode'}
         </div>
         <button
-          onClick={onStartLaunch}
-          disabled={!allGo}
-          className={`px-5 py-2.5 font-bold uppercase cursor-pointer flex items-center gap-2 text-xs transition-all ${
-            allGo
-              ? 'bg-[#FFB000] text-[#000] hover:bg-[#FFD597] shadow-lg go-button'
-              : 'bg-[#32353C] text-[#9F8E78] opacity-50 cursor-not-allowed'
+          type="button"
+          onClick={() => {
+            if (isSim) onStartLaunch();
+          }}
+          disabled={!isSim || !allGo}
+          className={`px-3.5 py-1.5 font-semibold uppercase flex items-center gap-1.5 text-xs rounded-[var(--radius-sm)] transition-colors ${
+            isSim && allGo
+              ? 'go-button cursor-pointer'
+              : 'bg-[var(--bg-surface-3)] text-[var(--text-tertiary)] opacity-50 cursor-not-allowed'
           }`}
         >
-          <Rocket className="w-4 h-4" />
-          <span>INITIATE ROCKET LAUNCH (0 &gt; 1000m)</span>
+          <Rocket className="w-3.5 h-3.5" />
+          <span>{isSim ? 'Initiate Sim Launch' : 'Sim Launch Disabled'}</span>
         </button>
       </div>
     </div>

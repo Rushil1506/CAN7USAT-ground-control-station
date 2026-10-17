@@ -1,28 +1,41 @@
 import React, { useState } from 'react';
 import { ChevronDown, Layers } from 'lucide-react';
 import { FLIGHT_STATES } from '../constants';
-import { FlightStateCode, TelemetryPacket } from '../types';
+import { FlightStateCode, TelemetryPacket, TelemetrySource } from '../types';
 
 interface FlightStatePanelProps {
   latestPacket: TelemetryPacket | null;
+  telemetrySource: TelemetrySource;
+  isStale?: boolean;
   onOverrideState: (state: FlightStateCode | null) => void;
 }
 
 export const FlightStatePanel: React.FC<FlightStatePanelProps> = ({
   latestPacket,
+  telemetrySource,
+  isStale = false,
   onOverrideState,
 }) => {
   const [overrideSelection, setOverrideSelection] = useState<'AUTO' | FlightStateCode>('AUTO');
 
-  const hasValidState =
+  const isSim = telemetrySource === 'SIMULATION';
+
+  const hasPacket = latestPacket !== null;
+  const fswStateName =
+    latestPacket && typeof latestPacket.fswStateName === 'string' && latestPacket.fswStateName.trim().length > 0
+      ? latestPacket.fswStateName.trim()
+      : null;
+
+  const hasMappedStateCode =
     latestPacket !== null &&
     typeof latestPacket.stateCode === 'number' &&
     latestPacket.stateCode in FLIGHT_STATES;
 
-  const currentStateCode = hasValidState ? latestPacket!.stateCode : null;
+  const currentStateCode = hasMappedStateCode ? latestPacket!.stateCode! : null;
   const stateInfo = currentStateCode !== null ? FLIGHT_STATES[currentStateCode] : null;
 
   const handleSelectChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    if (!isSim) return;
     const val = e.target.value;
     if (val === 'AUTO') {
       setOverrideSelection('AUTO');
@@ -35,6 +48,7 @@ export const FlightStatePanel: React.FC<FlightStatePanelProps> = ({
   };
 
   const handleStepClick = (code: FlightStateCode) => {
+    if (!isSim) return;
     setOverrideSelection(code);
     onOverrideState(code);
   };
@@ -50,6 +64,13 @@ export const FlightStatePanel: React.FC<FlightStatePanelProps> = ({
     FlightStateCode.IMPACT,
   ];
 
+  // Authoritative displayed label: use transmitted fswStateName in live serial, or stateInfo.label in simulation
+  const displayedLabel = !isSim
+    ? fswStateName ?? stateInfo?.label ?? 'UNAVAILABLE'
+    : stateInfo?.label ?? fswStateName ?? 'UNAVAILABLE';
+
+  const accentColor = stateInfo ? stateInfo.color : '#388BFD';
+
   return (
     <div className="telemetry-panel panel-amber-accent p-2.5 select-none flex flex-col gap-2">
       {/* Header & Sim Override Selector */}
@@ -61,49 +82,73 @@ export const FlightStatePanel: React.FC<FlightStatePanelProps> = ({
           </span>
         </div>
 
-        {/* Sim State Selection Dropdown Override */}
-        <div className="relative shrink-0">
-          <select
-            aria-label="Simulated Flight Software State Override"
-            value={overrideSelection === 'AUTO' ? 'AUTO' : String(overrideSelection)}
-            onChange={handleSelectChange}
-            className="bg-[var(--bg-surface-2)] border border-[var(--border-subtle)] focus:border-[var(--border-focus)] text-[var(--action-amber)] font-mono-data text-[10px] pl-2 pr-5 py-0.5 outline-none rounded-[var(--radius-xs)] cursor-pointer uppercase appearance-none h-6"
+        {/* Sim State Selection Dropdown Override (Simulation Only) */}
+        {isSim ? (
+          <div className="relative shrink-0">
+            <select
+              aria-label="Simulated Flight Software State Override"
+              value={overrideSelection === 'AUTO' ? 'AUTO' : String(overrideSelection)}
+              onChange={handleSelectChange}
+              className="bg-[var(--bg-surface-2)] border border-[var(--border-subtle)] focus:border-[var(--border-focus)] text-[var(--action-amber)] font-mono-data text-[10px] pl-2 pr-5 py-0.5 outline-none rounded-[var(--radius-xs)] cursor-pointer uppercase appearance-none h-6"
+            >
+              <option value="AUTO">SIM: AUTO TIMELINE</option>
+              {Object.values(FLIGHT_STATES).map((st) => (
+                <option key={st.code} value={st.code}>
+                  SIM FORCE [{st.code}] {st.label.replace(/^\d+:\s*/, '')}
+                </option>
+              ))}
+            </select>
+            <ChevronDown className="w-3 h-3 text-[var(--text-secondary)] absolute right-1 top-1.5 pointer-events-none" />
+          </div>
+        ) : (
+          <span
+            className={`font-mono-data text-[9px] px-1.5 py-0.5 border rounded-[var(--radius-xs)] uppercase shrink-0 ${
+              !hasPacket
+                ? 'bg-[var(--bg-surface-2)] text-[var(--text-tertiary)] border-[var(--border-subtle)]'
+                : isStale
+                ? 'bg-[var(--status-warning-bg)] text-[var(--status-warning)] border-[var(--status-warning)]/40 font-bold'
+                : 'bg-[var(--status-nominal-bg)] text-[var(--status-nominal)] border-[var(--status-nominal)]/40 font-bold'
+            }`}
           >
-            <option value="AUTO">SIM: AUTO TIMELINE</option>
-            {Object.values(FLIGHT_STATES).map((st) => (
-              <option key={st.code} value={st.code}>
-                SIM FORCE [{st.code}] {st.label.replace(/^\d+:\s*/, '')}
-              </option>
-            ))}
-          </select>
-          <ChevronDown className="w-3 h-3 text-[var(--text-secondary)] absolute right-1 top-1.5 pointer-events-none" />
-        </div>
+            {!hasPacket ? 'AWAITING RX' : isStale ? 'STALE FSW' : 'LIVE FSW'}
+          </span>
+        )}
       </div>
 
       {/* Primary State Readout Banner */}
-      {stateInfo !== null && currentStateCode !== null ? (
+      {hasPacket && fswStateName !== null ? (
         <div
           className="flex flex-col justify-between border border-[var(--border-subtle)] bg-[var(--bg-base)] dot-matrix-bg rounded-[var(--radius-sm)] px-3 py-2.5 border-l-2"
-          style={{ borderLeftColor: stateInfo.color }}
+          style={{ borderLeftColor: accentColor }}
         >
           <div className="flex items-center justify-between gap-2 mb-1">
             <span className="font-mono-data text-[10px] text-[var(--text-secondary)] uppercase tracking-wider tabular-nums">
-              STATE CODE [{stateInfo.code}]
+              {stateInfo !== null ? `STATE CODE [${stateInfo.code}]` : 'RAW TRANSMITTER STATE (UNMAPPED)'}
             </span>
             <span className="font-mono-data text-[9px] px-1.5 py-0.5 bg-[var(--bg-surface-1)] text-[var(--text-tertiary)] border border-[var(--border-muted)] rounded-[var(--radius-xs)] uppercase">
-              {overrideSelection === 'AUTO' ? 'SIM AUTO' : 'SIM OVERRIDE'}
+              {isSim
+                ? overrideSelection === 'AUTO'
+                  ? 'SIM AUTO'
+                  : 'SIM OVERRIDE'
+                : isStale
+                ? 'LAST RECEIVED (STALE)'
+                : 'LIVE SERIAL'}
             </span>
           </div>
 
           <div
             className="font-mono-data text-sm sm:text-base font-bold tracking-wide leading-snug break-words"
-            style={{ color: stateInfo.color }}
+            style={{ color: accentColor }}
           >
-            {stateInfo.label}
+            {displayedLabel}
           </div>
 
           <div className="font-mono-data text-[10px] text-[var(--text-secondary)] mt-1 leading-relaxed">
-            {stateInfo.description}
+            {stateInfo !== null
+              ? !isSim && fswStateName !== FlightStateCode[stateInfo.code]
+                ? `Transmitted '${fswStateName}' (mapped to ${stateInfo.label}) — ${stateInfo.description}`
+                : stateInfo.description
+              : `Transmitter reported FSW state '${fswStateName}' (no direct GCS 0–7 enum mapping).`}
           </div>
         </div>
       ) : (
@@ -112,7 +157,9 @@ export const FlightStatePanel: React.FC<FlightStatePanelProps> = ({
             FSW STATE UNAVAILABLE
           </span>
           <span className="font-mono-data text-[10px] text-[var(--text-tertiary)] mt-0.5">
-            Awaiting valid stateCode from telemetry stream
+            {isSim
+              ? 'Awaiting valid state from simulator'
+              : 'No valid live serial telemetry packet received yet'}
           </span>
         </div>
       )}
@@ -121,7 +168,13 @@ export const FlightStatePanel: React.FC<FlightStatePanelProps> = ({
       <div className="flex flex-col gap-1">
         <div className="flex justify-between items-center font-mono-data text-[9px] text-[var(--text-tertiary)]">
           <span>PHASE SEQUENCE (0–7)</span>
-          <span>{currentStateCode !== null ? `STAGE ${currentStateCode + 1} OF 8` : 'STANDBY'}</span>
+          <span>
+            {currentStateCode !== null
+              ? `STAGE ${currentStateCode + 1} OF 8`
+              : fswStateName !== null
+              ? `CUSTOM (${fswStateName})`
+              : 'STANDBY'}
+          </span>
         </div>
         <div className="grid grid-cols-8 gap-1">
           {allStates.map((code) => {
@@ -132,9 +185,16 @@ export const FlightStatePanel: React.FC<FlightStatePanelProps> = ({
               <button
                 key={code}
                 type="button"
+                disabled={!isSim}
                 onClick={() => handleStepClick(code)}
-                title={`Force Sim State [${st.code}] ${st.label}: ${st.description}`}
-                className={`h-5 font-mono-data text-[9px] tabular-nums transition-colors rounded-[var(--radius-xs)] cursor-pointer border flex items-center justify-center ${
+                title={
+                  isSim
+                    ? `Force Sim State [${st.code}] ${st.label}: ${st.description}`
+                    : `Phase [${st.code}] ${st.label} (override disabled in Live Serial mode)`
+                }
+                className={`h-5 font-mono-data text-[9px] tabular-nums transition-colors rounded-[var(--radius-xs)] border flex items-center justify-center ${
+                  !isSim ? 'cursor-default' : 'cursor-pointer'
+                } ${
                   isCurrent
                     ? 'bg-[var(--action-amber)] text-[var(--action-amber-contrast)] border-[var(--border-amber)] font-bold'
                     : isPassed

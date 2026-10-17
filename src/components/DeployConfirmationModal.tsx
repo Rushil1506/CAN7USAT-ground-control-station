@@ -1,15 +1,18 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { ShieldAlert, X, AlertTriangle, CheckCircle2, Flame } from 'lucide-react';
+import { ShieldAlert, X, AlertTriangle, CheckCircle2, Flame, Lock } from 'lucide-react';
 import { TEAM_INFO } from '../constants';
+import { TelemetrySource } from '../types';
 
 interface DeployConfirmationModalProps {
   isOpen: boolean;
+  telemetrySource: TelemetrySource;
   onClose: () => void;
   onConfirmDeploy: () => void;
 }
 
 export const DeployConfirmationModal: React.FC<DeployConfirmationModalProps> = ({
   isOpen,
+  telemetrySource,
   onClose,
   onConfirmDeploy,
 }) => {
@@ -17,12 +20,14 @@ export const DeployConfirmationModal: React.FC<DeployConfirmationModalProps> = (
   const [deployedSuccess, setDeployedSuccess] = useState<boolean>(false);
   const timerRef = useRef<number | null>(null);
 
+  const isSim = telemetrySource === 'SIMULATION';
+
   useEffect(() => {
-    if (!isOpen) {
+    if (!isOpen || !isSim) {
       setSliderVal(0);
       setDeployedSuccess(false);
     }
-  }, [isOpen]);
+  }, [isOpen, isSim]);
 
   useEffect(() => {
     return () => {
@@ -45,7 +50,7 @@ export const DeployConfirmationModal: React.FC<DeployConfirmationModalProps> = (
   };
 
   const handleConfirm = () => {
-    if (sliderVal < 100) return;
+    if (!isSim || sliderVal < 100) return;
     setDeployedSuccess(true);
     onConfirmDeploy();
     if (timerRef.current !== null) {
@@ -76,7 +81,7 @@ export const DeployConfirmationModal: React.FC<DeployConfirmationModalProps> = (
           </div>
           <div className="flex items-center gap-2">
             <span className="text-[9px] px-1.5 py-0.5 bg-[var(--bg-base)] text-[var(--action-amber)] border border-[var(--border-amber)]/40 rounded-[var(--radius-xs)] uppercase font-bold">
-              SIMULATOR ONLY
+              {isSim ? 'SIMULATOR ONLY' : 'HW TX LOCKED'}
             </span>
             <button
               type="button"
@@ -91,7 +96,25 @@ export const DeployConfirmationModal: React.FC<DeployConfirmationModalProps> = (
 
         {/* Modal Body */}
         <div className="p-4 flex flex-col gap-3.5">
-          {deployedSuccess ? (
+          {!isSim ? (
+            <div className="py-5 px-3 bg-[var(--bg-base)] border border-[var(--status-alert)]/40 rounded-[var(--radius-sm)] flex flex-col items-center justify-center text-center gap-2.5">
+              <Lock className="w-8 h-8 text-[var(--status-alert)]" />
+              <div className="text-sm font-bold text-[var(--status-alert)] uppercase tracking-wide">
+                HARDWARE TELECOMMANDS UNAVAILABLE
+              </div>
+              <div className="text-[11px] text-[var(--text-secondary)] leading-relaxed">
+                Live USB-Serial mode is strictly <strong className="text-[var(--text-primary)]">receive-only</strong>.
+                Transmitting real deployment or burnwire commands over serial/LoRa is disabled, and simulator overrides cannot be triggered while monitoring live hardware.
+              </div>
+              <button
+                type="button"
+                onClick={handleAbort}
+                className="mt-1 px-4 py-2 bg-[var(--bg-surface-2)] hover:bg-[var(--bg-surface-hover)] text-[var(--text-primary)] border border-[var(--border-subtle)] rounded-[var(--radius-sm)] font-bold uppercase cursor-pointer"
+              >
+                CLOSE
+              </button>
+            </div>
+          ) : deployedSuccess ? (
             <div className="py-6 px-3 bg-[var(--bg-base)] border border-[var(--status-nominal)]/40 rounded-[var(--radius-sm)] flex flex-col items-center justify-center text-center gap-2">
               <CheckCircle2 className="w-9 h-9 text-[var(--status-nominal)]" />
               <div className="text-sm font-bold text-[var(--status-nominal)] uppercase tracking-wide">
