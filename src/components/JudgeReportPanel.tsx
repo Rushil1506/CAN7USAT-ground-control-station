@@ -128,16 +128,16 @@ Generated Date:     ${new Date().toISOString().replace('T', ' ').slice(0, 19)} U
 
 2. DESCENT CONTROL SUBSYSTEM (DCS) PERFORMANCE:
 --------------------------------------------------------------------------------
-- Stage 1 (Reefed Parachute) Speed:     ${stage1DescentRate} (Target: 17 ± 2 m/s)
-- Disreefing Trigger Altitude:          600.0 m (Configurable Assumption)
-- Stage 2 (Disreefed Parachute) Speed:  ${stage2DescentRate} (Target: 1 - 3 m/s)
+- Stage 1 (Drogue Parachute) Speed:     ${stage1DescentRate} (Target: 17 ± 2 m/s)
+- Drogue -> Parafoil Transition Alt:   ~600 m (Approximate / Configurable Assumption)
+- Stage 2 (Main Parafoil) Speed:        ${stage2DescentRate} (Target: 1 - 3 m/s)
 - Z-Axis Momentum Wheel Speed:          ${maxRpmStr} (Target: 12,000 RPM)
 - Latest Flight Software State:         ${latestPacket?.fswStateName ?? 'UNAVAILABLE'}
 
 3. ELECTRICAL POWER & TELEMETRY QUALITY:
 --------------------------------------------------------------------------------
 - 2S Molicel INR-18650-P30B Voltage:    ${voltRangeStr}
-- Telemetry RF Frequency:               865 MHz LoRa
+- Telemetry RF Frequency:               865.50 MHz LoRa (Main) / 867.25 MHz (Backup) • Sync Word 0x91
 ================================================================================`;
   };
 
@@ -198,7 +198,7 @@ Generated Date:     ${new Date().toISOString().replace('T', ' ').slice(0, 19)} U
 
         <div className="bg-[var(--bg-surface-2)] border border-[var(--border-subtle)] rounded-[var(--radius-sm)] p-2.5 flex flex-col gap-0.5">
           <span className="text-[var(--text-tertiary)] text-[10px] font-semibold uppercase">
-            Stage 1 Reefed Rate
+            Stage 1 Drogue Rate
           </span>
           <span className="font-mono-data text-[var(--text-primary)] font-bold text-base">
             {stage1DescentRate}
@@ -210,7 +210,7 @@ Generated Date:     ${new Date().toISOString().replace('T', ' ').slice(0, 19)} U
 
         <div className="bg-[var(--bg-surface-2)] border border-[var(--border-subtle)] rounded-[var(--radius-sm)] p-2.5 flex flex-col gap-0.5">
           <span className="text-[var(--text-tertiary)] text-[10px] font-semibold uppercase">
-            Stage 2 Disreefed Rate
+            Stage 2 Parafoil Rate
           </span>
           <span className="font-mono-data text-[var(--accent-teal)] font-bold text-base">
             {stage2DescentRate}

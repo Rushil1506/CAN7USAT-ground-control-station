@@ -1,5 +1,5 @@
 import React from 'react';
-import { ListFilter, Battery, Volume2, Radio, Activity, Compass, Clock } from 'lucide-react';
+import { ListFilter, Battery, Volume2, Radio, Activity, Compass, Clock, ShieldCheck } from 'lucide-react';
 import { TelemetryPacket, TelemetrySource } from '../types';
 import { convertGnssUtcToIst } from '../services/telemetryParser';
 
@@ -66,7 +66,7 @@ export const RawReadoutsPanel: React.FC<RawReadoutsPanelProps> = ({
   const gsmActive = hasGsmStatus && latestPacket!.gsmModuleActive === true;
 
   return (
-    <div className="telemetry-panel panel-gray-accent p-2.5 select-none flex flex-col gap-2">
+    <div className="ops-card p-3 select-none flex flex-col gap-2">
       {/* Header */}
       <div className="flex justify-between items-center">
         <div className="flex items-center gap-1.5">
@@ -317,6 +317,73 @@ export const RawReadoutsPanel: React.FC<RawReadoutsPanelProps> = ({
                 }`}
               >
                 {uvStr}
+              </span>
+            </div>
+          </div>
+        </div>
+
+        {/* Sensor Calibration & System Health Indicators */}
+        <div className="col-span-2 pt-1 border-t border-[var(--border-subtle)]">
+          <div className="text-[10px] text-[var(--text-secondary)] font-semibold uppercase mb-1 flex items-center justify-between">
+            <span className="flex items-center gap-1">
+              <ShieldCheck className="w-3 h-3 text-[var(--accent-teal)]" />
+              CALIBRATION &amp; HEALTH
+            </span>
+            <span className="text-[9px] text-[var(--text-tertiary)]">
+              {isSim ? 'SIM SYNTHESIZED' : 'HARDWARE SENSORS'}
+            </span>
+          </div>
+          <div className="grid grid-cols-2 gap-1.5 font-mono-data text-[10px]">
+            <div className="flex items-center justify-between bg-[var(--bg-base)] px-2 py-1 border border-[var(--border-subtle)] rounded-[var(--radius-xs)]">
+              <span className="text-[var(--text-tertiary)]">IMU ZERO-BIAS:</span>
+              <span
+                className={`font-bold ${
+                  hasAccel && isValidNum(latestPacket?.roll)
+                    ? 'text-[var(--status-nominal)]'
+                    : 'text-[var(--status-warning)]'
+                }`}
+              >
+                {hasAccel && isValidNum(latestPacket?.roll) ? 'CALIBRATED' : 'UNVERIFIED'}
+              </span>
+            </div>
+            <div className="flex items-center justify-between bg-[var(--bg-base)] px-2 py-1 border border-[var(--border-subtle)] rounded-[var(--radius-xs)]">
+              <span className="text-[var(--text-tertiary)]">BARO BASELINE:</span>
+              <span
+                className={`font-bold ${
+                  isValidNum(latestPacket?.pressure) && latestPacket!.pressure > 100
+                    ? 'text-[var(--status-nominal)]'
+                    : 'text-[var(--status-warning)]'
+                }`}
+              >
+                {isValidNum(latestPacket?.pressure) && latestPacket!.pressure > 100
+                  ? 'REF ZERO OK'
+                  : 'PENDING'}
+              </span>
+            </div>
+            <div className="flex items-center justify-between bg-[var(--bg-base)] px-2 py-1 border border-[var(--border-subtle)] rounded-[var(--radius-xs)]">
+              <span className="text-[var(--text-tertiary)]">GNSS EPHEMERIS:</span>
+              <span
+                className={`font-bold ${
+                  latestPacket?.gpsValid
+                    ? 'text-[var(--status-nominal)]'
+                    : 'text-[var(--status-alert)]'
+                }`}
+              >
+                {latestPacket?.gpsValid ? '3D FIX LOCK' : 'NO LOCK'}
+              </span>
+            </div>
+            <div className="flex items-center justify-between bg-[var(--bg-base)] px-2 py-1 border border-[var(--border-subtle)] rounded-[var(--radius-xs)]">
+              <span className="text-[var(--text-tertiary)]">POWER SYSTEM:</span>
+              <span
+                className={`font-bold ${
+                  isValidNum(latestPacket?.batteryVoltage) && latestPacket!.batteryVoltage >= 7.0
+                    ? 'text-[var(--status-nominal)]'
+                    : 'text-[var(--status-alert)]'
+                }`}
+              >
+                {isValidNum(latestPacket?.batteryVoltage) && latestPacket!.batteryVoltage >= 7.0
+                  ? 'NOMINAL >7V'
+                  : 'UNDERVOLT'}
               </span>
             </div>
           </div>

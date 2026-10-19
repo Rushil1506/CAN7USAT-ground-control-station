@@ -1,6 +1,6 @@
 /**
  * IN-SPACe CAN-7USAT India Student Competition 2026-27 (3rd Edition)
- * Team Parikshit (Team No. 2026-INSPACe-CAN-7USAT-332)
+ * Team Parikshit (Team 017, 2026-IN-SPACe-CAN-7USAT-017)
  * Manipal Institute of Technology, MAHE, Manipal
  */
 
@@ -10,8 +10,8 @@ export enum FlightStateCode {
   LAUNCH_PAD = 2,
   ASCENT = 3,
   ROCKET_DEPLOY = 4,
-  DESCENT = 5,             // Stage 1 Reefed Parachute (1000m -> 600m @ 17 m/s)
-  AEROBREAK_RELEASE = 6,   // Stage 2 Disreefed Parachute (600m -> 0m @ 1-3 m/s)
+  DESCENT = 5,             // Stage 1 drogue parachute descent (1000m -> ~600m @ 17 m/s)
+  AEROBREAK_RELEASE = 6,   // Stage 2 main parafoil phase (~600m -> 0m @ 1-3 m/s); enum name kept for protocol compatibility
   IMPACT = 7,              // Touchdown / Recovery Mode
 }
 
@@ -58,7 +58,7 @@ export interface TelemetryPacket {
   receivedAtMs?: number;
   receivedAtTimeStr?: string; // Computer packet-reception time-of-day (UTC), kept separate from GNSS time
 
-  teamId: string;            // "2026-IN-SPACe-CAN-7USAT-017" (live) or "2026-INSPACe-CAN-7USAT-332" (sim)
+  teamId: string;            // "2026-IN-SPACe-CAN-7USAT-017" (Team 017; live frames are validated against this by the parser)
   packetNumber: number;
   missionTimeSeconds: number; // Seconds since launch
   timestampUtc: string;       // Exact raw GNSS time string as received (HH:MM:SS, UTC time-of-day only, no date)
@@ -113,7 +113,7 @@ export interface TelemetryPacket {
   fswStateName: string;
   l1Connected: boolean;             // Primary LoRa link
   l2Connected: boolean | null;      // Backup link
-  deployed: boolean | null;         // Disreefed parachute active
+  deployed: boolean | null;         // Simulator-only deployment flag; not transmitted by live hardware (always null in live)
   audioBeaconActive: boolean | null;// 92dB recovery buzzer
   gsmModuleActive: boolean | null;  // Recovery SMS active
 }

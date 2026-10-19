@@ -4,7 +4,7 @@ import { convertGnssUtcToIst } from './telemetryParser';
 
 export class TelemetryEngine {
   private packetCount: number = 1240;
-  private missionTime: number = 35; // Default initial mission time (~450m reefed descent phase)
+  private missionTime: number = 35; // Default initial mission time (~450m drogue-descent phase)
   private isRunning: boolean = true;
   private stateOverride: FlightStateCode | null = null;
   private disturbanceFactor: number = 0;
@@ -15,8 +15,7 @@ export class TelemetryEngine {
 
   // Mission Physics Constants (2026 PDR Specification)
   private apogee: number = 1000.0;     // meters AGL
-  private disreefAlt: number = 600.0;  // meters AGL (Stage 2 burnwire trigger)
-  private manualDisreef: boolean = false;
+  private parafoilTransitionAlt: number = 600.0;  // meters AGL (approximate drogue -> main parafoil transition)
   private simulatedPressurePa: number | null = null;
 
   constructor() {
@@ -66,17 +65,12 @@ export class TelemetryEngine {
     this.packetCount = 0;
     this.stateOverride = null;
     this.disturbanceFactor = 0;
-    this.manualDisreef = false;
     this.simulatedPressurePa = null;
     this.tick();
   }
 
   public setStateOverride(state: FlightStateCode | null) {
     this.stateOverride = state;
-  }
-
-  public triggerBurnwireDisreef() {
-    this.manualDisreef = true;
   }
 
   public injectPressurePa(pressurePa: number) {
@@ -125,7 +119,7 @@ export class TelemetryEngine {
     } else if (t < 28) {
       state = FlightStateCode.ROCKET_DEPLOY; // Ejection at 1000m apogee
     } else {
-      // During descent: calculate current altitude first to trigger disreefing at 600m
+      // During descent: calculate current altitude first to switch drogue -> parafoil phase at ~600m
       const descentTime = t - 28;
       let estimatedAlt = Math.max(0, 1000.0 - descentTime * 17.0);
 
@@ -136,10 +130,10 @@ export class TelemetryEngine {
         estimatedAlt = 44330 * (1 - Math.pow(pressHpa / 1013.25, 0.1903));
       }
 
-      if (estimatedAlt > this.disreefAlt && !this.manualDisreef) {
-        state = FlightStateCode.DESCENT; // Stage 1 Reefed Parachute (1000m -> 600m @ 17m/s)
+      if (estimatedAlt > this.parafoilTransitionAlt) {
+        state = FlightStateCode.DESCENT; // Stage 1 Drogue descent (1000m -> ~600m @ 17m/s)
       } else if (estimatedAlt > 1.0) {
-        state = FlightStateCode.AEROBREAK_RELEASE; // Stage 2 Disreefed Parachute (600m -> 0m @ 1-3m/s)
+        state = FlightStateCode.AEROBREAK_RELEASE; // Stage 2 Main parafoil phase (~600m -> 0m @ 1-3m/s)
       } else {
         state = FlightStateCode.IMPACT; // Touchdown
       }
@@ -218,9 +212,9 @@ export class TelemetryEngine {
       }
 
       case FlightStateCode.DESCENT: {
-        // Stage 1 Reefed Parachute: 1000m -> 600m @ 17m/s (± 2 m/s)
+        // Stage 1 Drogue parachute: 1000m -> ~600m @ 17m/s (± 2 m/s)
         const stage1Time = t - 28;
-        altitude = Math.max(this.disreefAlt, 1000.0 - stage1Time * 17.0 + noise() * 1.2);
+        altitude = Math.max(this.parafoilTransitionAlt, 1000.0 - stage1Time * 17.0 + noise() * 1.2);
         velocity = 17.0 + Math.sin(stage1Time * 0.2) * 1.2 + noise() * 0.5;
 
         accelZ = 1.0 + noise() * 0.15;
@@ -239,7 +233,7 @@ export class TelemetryEngine {
       }
 
       case FlightStateCode.AEROBREAK_RELEASE: {
-        // Stage 2 Disreefed Parachute at 600m AGL: 600m -> 0m @ 1 - 3 m/s (nominal 2.2 m/s)
+        // Stage 2 Main parafoil phase from ~600m AGL: 600m -> 0m @ 1 - 3 m/s (nominal 2.2 m/s)
         const stage2Time = Math.max(0, t - 51.5);
         altitude = Math.max(0, 600.0 - stage2Time * 2.2 + noise() * 0.8);
         velocity = 2.2 + Math.sin(stage2Time * 0.1) * 0.3 + noise() * 0.2;

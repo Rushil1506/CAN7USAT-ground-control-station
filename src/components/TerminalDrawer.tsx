@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Terminal, Download, Trash2, Send, X, Copy, Check, ArrowDownCircle, AlertCircle, Lock } from 'lucide-react';
 import { RawLogEntry, TelemetryPacket, TelemetrySource } from '../types';
+import { exportTelemetryPacketsToCsv } from '../services/telemetryExport';
 
 interface TerminalDrawerProps {
   isOpen: boolean;
@@ -12,10 +13,57 @@ interface TerminalDrawerProps {
   onClearLogs: () => void;
 }
 
-function csvCell(val: string | number | boolean | null | undefined): string {
-  if (val === null || val === undefined) return '';
-  if (typeof val === 'number') return Number.isFinite(val) ? String(val) : '';
-  return String(val);
+export function getLogBadgeLabel(
+  log: RawLogEntry,
+  fallbackSource: TelemetrySource = 'SIMULATION'
+): string {
+  const entrySource = log.source ?? fallbackSource;
+  const entryIsSim = entrySource === 'SIMULATION';
+  if (log.type === 'err') return entryIsSim ? 'SIM-ERR' : 'LIVE-ERR';
+  if (log.type === 'sys') return entryIsSim ? 'SIM-SYS' : 'LIVE-SYS';
+  if (entryIsSim) {
+    if (log.type === 'tx') return 'SIM-TX';
+    if (log.type === 'rx' && log.text.includes('ACK]')) return 'SIM-ACK';
+    return 'SIM-RX';
+  }
+  return log.type === 'tx' ? 'LIVE-TX' : 'LIVE-RX';
+}
+
+export function getTerminalFilterTabs(
+  telemetrySource: TelemetrySource
+): { key: 'all' | 'rx' | 'tx' | 'sys' | 'err'; label: string }[] {
+  if (telemetrySource === 'SIMULATION') {
+    return [
+      { key: 'all', label: 'ALL' },
+      { key: 'rx', label: 'SIM RX' },
+      { key: 'err', label: 'ERR' },
+      { key: 'tx', label: 'SIM TX' },
+      { key: 'sys', label: 'SYS' },
+    ];
+  }
+  return [
+    { key: 'all', label: 'ALL' },
+    { key: 'rx', label: 'LIVE RX' },
+    { key: 'err', label: 'ERR' },
+    { key: 'sys', label: 'SYS' },
+  ];
+}
+
+export function filterLogsBySource(
+  rawLogEntries: RawLogEntry[],
+  telemetrySource: TelemetrySource,
+  filterType: 'all' | 'rx' | 'tx' | 'sys' | 'err' = 'all'
+): RawLogEntry[] {
+  const effectiveFilter =
+    telemetrySource === 'LIVE_SERIAL' && filterType === 'tx' ? 'all' : filterType;
+
+  return rawLogEntries.filter((entry) => {
+    const entrySource = entry.source ?? 'SIMULATION';
+    if (entrySource !== telemetrySource) return false;
+    if (telemetrySource === 'LIVE_SERIAL' && entry.type === 'tx') return false;
+    if (effectiveFilter === 'all') return true;
+    return entry.type === effectiveFilter;
+  });
 }
 
 export const TerminalDrawer: React.FC<TerminalDrawerProps> = ({
@@ -36,6 +84,13 @@ export const TerminalDrawer: React.FC<TerminalDrawerProps> = ({
 
   const isSim = telemetrySource === 'SIMULATION';
 
+  // Reset SIM TX filter tab automatically when switching to LIVE_SERIAL
+  useEffect(() => {
+    if (!isSim && filterType === 'tx') {
+      setFilterType('all');
+    }
+  }, [isSim, filterType]);
+
   useEffect(() => {
     return () => {
       if (copyTimerRef.current !== null) {
@@ -44,11 +99,14 @@ export const TerminalDrawer: React.FC<TerminalDrawerProps> = ({
     };
   }, []);
 
+  const sourceScopedLogs = filterLogsBySource(rawLogEntries, telemetrySource, 'all');
+  const filteredLogs = filterLogsBySource(rawLogEntries, telemetrySource, filterType);
+
   useEffect(() => {
     if (isOpen && autoScroll && consoleContainerRef.current) {
       consoleContainerRef.current.scrollTop = consoleContainerRef.current.scrollHeight;
     }
-  }, [rawLogEntries.length, isOpen, autoScroll, filterType]);
+  }, [filteredLogs.length, isOpen, autoScroll, filterType, telemetrySource]);
 
   if (!isOpen) return null;
 
@@ -61,108 +119,17 @@ export const TerminalDrawer: React.FC<TerminalDrawerProps> = ({
 
   const downloadCsvLog = () => {
     if (historyPackets.length === 0) return;
-    const headers = [
-      'Source',
-      'TeamId',
-      'MissionTimeSec',
-      'PacketNumber',
-      'Altitude_m',
-      'Pressure_Pa',
-      'Pressure_hPa',
-      'Temp_C',
-      'Batt_V',
-      'GnssTime_UTC',
-      'GnssTime_IST',
-      'ComputerRxTime_UTC',
-      'Latitude',
-      'Longitude',
-      'GpsAltitude_m',
-      'GpsSats',
-      'GpsFixType',
-      'AccelX',
-      'AccelY',
-      'AccelZ',
-      'Roll_deg',
-      'Pitch_deg',
-      'SpinRate_degs',
-      'FswStateName',
-      'MappedStateCode',
-      'Velocity_ms',
-      'Yaw_deg',
-      'WheelRpm',
-      'CO2_ppm',
-      'PM2_5_ugm3',
-      'UV_Index',
-      'Humidity_RH',
-      'Current_A',
-      'Power_W',
-    ].join(',');
-
-    const rows = historyPackets.map((p) =>
-      [
-        csvCell(p.source ?? telemetrySource),
-        csvCell(p.teamId),
-        csvCell(p.missionTimeSeconds),
-        csvCell(p.packetNumber),
-        csvCell(p.altitude),
-        csvCell(p.rawPressurePa),
-        csvCell(p.pressure),
-        csvCell(p.temperature),
-        csvCell(p.batteryVoltage),
-        csvCell(p.timestampUtc),
-        csvCell(p.gnssTimeIst),
-        csvCell(p.receivedAtTimeStr),
-        csvCell(p.latitude),
-        csvCell(p.longitude),
-        csvCell(p.gpsAltitude),
-        csvCell(p.gpsSats),
-        csvCell(p.gpsFixType),
-        csvCell(p.accelX),
-        csvCell(p.accelY),
-        csvCell(p.accelZ),
-        csvCell(p.roll),
-        csvCell(p.pitch),
-        csvCell(p.spinRate),
-        csvCell(p.fswStateName),
-        csvCell(p.stateCode),
-        csvCell(p.velocity),
-        csvCell(p.yaw),
-        csvCell(p.wheelRpm),
-        csvCell(p.co2),
-        csvCell(p.pm2_5),
-        csvCell(p.uv),
-        csvCell(p.humidity),
-        csvCell(p.currentDraw),
-        csvCell(p.power),
-      ].join(',')
-    );
-
-    const csvContent = 'data:text/csv;charset=utf-8,' + [headers, ...rows].join('\n');
-    const encodedUri = encodeURI(csvContent);
-    const link = document.createElement('a');
-    link.setAttribute('href', encodedUri);
-    const prefix = isSim ? 'CANSAT_SIM_TELEMETRY_LOG' : 'CANSAT_LIVE_SERIAL_LOG';
-    link.setAttribute('download', `${prefix}_${new Date().toISOString().slice(0, 19)}.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+    exportTelemetryPacketsToCsv(historyPackets, telemetrySource);
   };
 
-  const getBadgeLabel = (log: RawLogEntry): string => {
-    const entryIsSim = (log.source ?? telemetrySource) === 'SIMULATION';
-    if (log.type === 'err') return 'RX-ERR';
-    if (log.type === 'sys') return 'SYS';
-    if (entryIsSim) {
-      if (log.type === 'tx') return 'SIM-TX';
-      if (log.type === 'rx' && log.text.includes('ACK]')) return 'SIM-ACK';
-      return 'SIM-RX';
-    }
-    return log.type === 'tx' ? 'TX' : 'RX';
-  };
+  const getBadgeLabel = (log: RawLogEntry): string =>
+    getLogBadgeLabel(log, telemetrySource);
 
   const copyToClipboard = () => {
-    if (rawLogEntries.length === 0) return;
-    const text = rawLogEntries.map((l) => `[${l.time}] [${getBadgeLabel(l)}] ${l.text}`).join('\n');
+    if (sourceScopedLogs.length === 0) return;
+    const text = sourceScopedLogs
+      .map((l) => `[${l.time}] [${getBadgeLabel(l)}] ${l.text}`)
+      .join('\n');
     navigator.clipboard.writeText(text);
     setCopied(true);
     if (copyTimerRef.current !== null) {
@@ -171,18 +138,7 @@ export const TerminalDrawer: React.FC<TerminalDrawerProps> = ({
     copyTimerRef.current = window.setTimeout(() => setCopied(false), 2000);
   };
 
-  const filteredLogs = rawLogEntries.filter((l) => {
-    if (filterType === 'all') return true;
-    return l.type === filterType;
-  });
-
-  const filterLabels: { key: 'all' | 'rx' | 'tx' | 'sys' | 'err'; label: string }[] = [
-    { key: 'all', label: 'ALL' },
-    { key: 'rx', label: isSim ? 'SIM RX' : 'RX' },
-    { key: 'err', label: 'ERR' },
-    { key: 'tx', label: 'SIM TX' },
-    { key: 'sys', label: 'SYS' },
-  ];
+  const filterLabels = getTerminalFilterTabs(telemetrySource);
 
   return (
     <div
@@ -250,7 +206,7 @@ export const TerminalDrawer: React.FC<TerminalDrawerProps> = ({
           <button
             type="button"
             onClick={copyToClipboard}
-            disabled={rawLogEntries.length === 0}
+            disabled={sourceScopedLogs.length === 0}
             title="Copy All Log Entries"
             aria-label="Copy All Log Entries"
             className="p-1.5 bg-[var(--bg-base)] hover:bg-[var(--bg-surface-hover)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] border border-[var(--border-subtle)] rounded-[var(--radius-xs)] cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
@@ -276,7 +232,7 @@ export const TerminalDrawer: React.FC<TerminalDrawerProps> = ({
           <button
             type="button"
             onClick={onClearLogs}
-            disabled={rawLogEntries.length === 0}
+            disabled={sourceScopedLogs.length === 0}
             title="Clear Terminal Buffer"
             aria-label="Clear Terminal Buffer"
             className="p-1.5 bg-[var(--bg-base)] hover:bg-[var(--status-alert-bg)] text-[var(--status-alert)] border border-[var(--border-subtle)] rounded-[var(--radius-xs)] cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
@@ -305,10 +261,12 @@ export const TerminalDrawer: React.FC<TerminalDrawerProps> = ({
         {filteredLogs.length === 0 ? (
           <div className="h-full flex flex-col items-center justify-center text-center py-8 gap-1">
             <span className="text-[var(--text-secondary)] font-semibold text-xs uppercase">
-              {rawLogEntries.length === 0 ? 'TERMINAL BUFFER EMPTY' : `NO '${filterType.toUpperCase()}' LOG ENTRIES`}
+              {sourceScopedLogs.length === 0
+                ? 'TERMINAL BUFFER EMPTY'
+                : `NO '${filterType.toUpperCase()}' LOG ENTRIES`}
             </span>
             <span className="text-[var(--text-tertiary)] text-[10px]">
-              {rawLogEntries.length === 0
+              {sourceScopedLogs.length === 0
                 ? isSim
                   ? 'Awaiting simulated telemetry frames or local command logs.'
                   : 'Awaiting incoming live USB serial CSV frames.'
@@ -319,8 +277,8 @@ export const TerminalDrawer: React.FC<TerminalDrawerProps> = ({
           filteredLogs.map((log, idx) => {
             const badgeText = getBadgeLabel(log);
             const isAck = badgeText === 'SIM-ACK';
-            const isLiveRx = badgeText === 'RX';
-            const isErr = badgeText === 'RX-ERR';
+            const isLiveRx = badgeText === 'LIVE-RX';
+            const isErr = badgeText.endsWith('-ERR');
 
             const badgeClass = isErr
               ? 'text-[var(--status-alert)] bg-[var(--status-alert-bg)] border-[var(--status-alert)]/40'
@@ -341,7 +299,7 @@ export const TerminalDrawer: React.FC<TerminalDrawerProps> = ({
                   {log.time}
                 </span>
                 <span
-                  className={`text-[9px] font-bold uppercase px-1.5 py-0.2 min-w-[56px] text-center border rounded-[var(--radius-xs)] shrink-0 select-none ${badgeClass}`}
+                  className={`text-[9px] font-bold uppercase px-1.5 py-0.2 min-w-[64px] text-center border rounded-[var(--radius-xs)] shrink-0 select-none ${badgeClass}`}
                 >
                   {badgeText}
                 </span>
@@ -390,7 +348,7 @@ export const TerminalDrawer: React.FC<TerminalDrawerProps> = ({
           onChange={(e) => setInputCommand(e.target.value)}
           placeholder={
             isSim
-              ? 'Enter command for local simulator (e.g. CMD,2026-INSPACe-CAN-7USAT-332,CALIBRATE,1)'
+              ? 'Enter command for local simulator (e.g. CMD,2026-IN-SPACe-CAN-7USAT-017,CALIBRATE,1)'
               : 'Hardware telecommand transmission is disabled in Live Serial receive-only mode'
           }
           className="flex-1 min-w-[200px] bg-[var(--bg-base)] border border-[var(--border-subtle)] focus:border-[var(--border-amber)] text-[var(--text-primary)] font-mono-data text-xs px-2.5 py-1.5 outline-none rounded-[var(--radius-sm)] disabled:opacity-50 disabled:cursor-not-allowed"

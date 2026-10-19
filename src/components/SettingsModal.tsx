@@ -1,19 +1,68 @@
-import React, { useState } from 'react';
-import { Settings as SettingsIcon, X, Volume2, Radio, Sliders, ShieldAlert, RotateCcw, Check } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+import {
+  Settings as SettingsIcon,
+  X,
+  Volume2,
+  Radio,
+  Sliders,
+  ShieldAlert,
+  RotateCcw,
+  Check,
+  LayoutDashboard,
+} from 'lucide-react';
 import { TEAM_INFO } from '../constants';
+import {
+  DEFAULT_OVERVIEW_PREFERENCES,
+  OVERVIEW_WIDGETS,
+  OverviewPreferences,
+  OverviewWidgetId,
+} from '../services/overviewPreferences';
+import { RadioAssignmentPanel } from './RadioAssignmentPanel';
 
 interface SettingsModalProps {
   isOpen: boolean;
   onClose: () => void;
+  overviewPrefs?: OverviewPreferences;
+  onUpdateOverviewPrefs?: (prefs: OverviewPreferences) => void;
 }
 
-export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
+export const SettingsModal: React.FC<SettingsModalProps> = ({
+  isOpen,
+  onClose,
+  overviewPrefs,
+  onUpdateOverviewPrefs,
+}) => {
   const [telemetryRate, setTelemetryRate] = useState<number>(10);
   const [soundEnabled, setSoundEnabled] = useState<boolean>(true);
   const [unitSystem, setUnitSystem] = useState<'METRIC' | 'IMPERIAL'>('METRIC');
   const [callsign, setCallsign] = useState<string>(TEAM_INFO.id);
+  const [localOverviewPrefs, setLocalOverviewPrefs] = useState<OverviewPreferences>(
+    () => overviewPrefs ?? DEFAULT_OVERVIEW_PREFERENCES
+  );
+
+  useEffect(() => {
+    if (overviewPrefs) {
+      setLocalOverviewPrefs(overviewPrefs);
+    }
+  }, [overviewPrefs, isOpen]);
 
   if (!isOpen) return null;
+
+  const handleToggleWidget = (id: OverviewWidgetId) => {
+    setLocalOverviewPrefs((prev) => {
+      const next = {
+        ...prev,
+        [id]: !prev[id],
+      };
+      onUpdateOverviewPrefs?.(next);
+      return next;
+    });
+  };
+
+  const handleResetOverviewDefaults = () => {
+    setLocalOverviewPrefs(DEFAULT_OVERVIEW_PREFERENCES);
+    onUpdateOverviewPrefs?.(DEFAULT_OVERVIEW_PREFERENCES);
+  };
 
   const trimmedCallsign = callsign.trim();
   const isCallsignValid = /^[A-Za-z0-9_-]{3,40}$/.test(trimmedCallsign);
@@ -28,11 +77,14 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose })
     setTelemetryRate(10);
     setUnitSystem('METRIC');
     setSoundEnabled(true);
+    setLocalOverviewPrefs(DEFAULT_OVERVIEW_PREFERENCES);
+    onUpdateOverviewPrefs?.(DEFAULT_OVERVIEW_PREFERENCES);
   };
 
   const handleApplyAndClose = () => {
     if (validationError) return;
     setCallsign(trimmedCallsign);
+    onUpdateOverviewPrefs?.(localOverviewPrefs);
     onClose();
   };
 
@@ -232,6 +284,67 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose })
                 </button>
               </div>
             </div>
+          </div>
+
+          {/* Section 4: Overview Dashboard Widgets (Local Display Preferences) */}
+          <div className="flex flex-col gap-3 border border-[var(--border-subtle)] bg-[var(--bg-surface-2)]/50 rounded-[var(--radius-sm)] p-3">
+            <div className="flex flex-wrap items-center justify-between gap-1 border-b border-[var(--border-subtle)] pb-1.5">
+              <span className="flex items-center gap-1.5 text-[11px] font-bold text-[var(--text-primary)] uppercase">
+                <LayoutDashboard className="w-3.5 h-3.5 text-[var(--accent-teal)]" />
+                MISSION OVERVIEW DASHBOARD WIDGETS
+              </span>
+              <button
+                type="button"
+                onClick={handleResetOverviewDefaults}
+                className="text-[9px] px-1.5 py-0.5 bg-[var(--bg-base)] hover:bg-[var(--bg-surface-hover)] text-[var(--text-secondary)] border border-[var(--border-subtle)] rounded-[var(--radius-xs)] uppercase cursor-pointer"
+              >
+                Restore Overview Defaults
+              </button>
+            </div>
+
+            <p className="text-[10px] text-[var(--text-secondary)] leading-relaxed">
+              Toggle widget visibility on the Mission Overview workspace for this browser session.
+              These preferences control local layout only and do not modify CanSat onboard hardware or flight state.
+            </p>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              {OVERVIEW_WIDGETS.map((widget) => {
+                const isChecked = localOverviewPrefs[widget.id];
+                return (
+                  <label
+                    key={widget.id}
+                    className="flex items-start gap-2 p-2 bg-[var(--bg-base)] border border-[var(--border-subtle)] rounded-[var(--radius-xs)] cursor-pointer hover:border-[var(--border-focus)] transition-colors"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={isChecked}
+                      onChange={() => handleToggleWidget(widget.id)}
+                      className="mt-0.5 rounded-[var(--radius-xs)] border-[var(--border-subtle)] text-[var(--accent-cobalt)] focus:ring-0 cursor-pointer"
+                    />
+                    <div className="flex flex-col min-w-0">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className="text-[11px] font-bold text-[var(--text-primary)]">
+                          {widget.label}
+                        </span>
+                        {widget.onlyIn === 'SIMULATION' && (
+                          <span className="text-[8px] font-mono px-1 py-0.2 bg-[var(--status-info-bg)] text-[var(--accent-cobalt)] border border-[var(--accent-cobalt)]/25 rounded-[var(--radius-xs)] uppercase font-semibold">
+                            SIM ONLY
+                          </span>
+                        )}
+                      </div>
+                      <span className="text-[9px] text-[var(--text-tertiary)] leading-tight mt-0.5">
+                        {widget.description}
+                      </span>
+                    </div>
+                  </label>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Section 5: Assigned Radio Configuration (Competition Assignment — Team 017) */}
+          <div className="flex flex-col gap-2 border border-[var(--border-subtle)] bg-[var(--bg-surface-2)]/50 rounded-[var(--radius-sm)] p-3">
+            <RadioAssignmentPanel compact />
           </div>
         </div>
 

@@ -7,3 +7,6 @@ coverage/
 .env*
 !.env.example
 .env.local
+__pycache__/
+*.py[cod]
+.pytest_cache/

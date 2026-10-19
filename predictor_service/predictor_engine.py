@@ -31,8 +31,8 @@ Architecture & Notebook Audit Resolutions:
      sea-level pressure (1013.25 hPa) is treated as an explicit configurable assumption
      (`baro_ground_offset_m`, `ground_elevation_amsl_m`, `altitude_reference_verified`).
    - Similarly, repository scripts (`descent_sim.py` vs `constants.ts`) disagree on
-     whether disreef occurs at 600.0 m or 500.0 m. Two-stage descent parameters are
-     therefore configurable (`propagation_mode`, `disreef_transition_altitude_m`,
+     whether the drogue-to-parafoil transition occurs at 600.0 m or 500.0 m. Two-stage descent parameters are
+     therefore configurable (`propagation_mode`, `parafoil_transition_altitude_m`,
      `stage1_nominal_descent_rate_ms`, `stage2_nominal_descent_rate_ms`) and default to
      `'OBSERVED_RATE'` propagation until verified against the official mission profile.
 
@@ -203,7 +203,7 @@ class PredictorConfig:
 
     # Descent propagation mode and configurable two-stage parameters
     propagation_mode: DescentPropagationMode = DescentPropagationMode.OBSERVED_RATE
-    disreef_transition_altitude_m: float = 600.0
+    parafoil_transition_altitude_m: float = 600.0
     stage1_nominal_descent_rate_ms: float = 17.0
     stage2_nominal_descent_rate_ms: float = 2.2
     mission_profile_verified: bool = False
@@ -654,7 +654,7 @@ class PhysicsBaselinePredictor:
             "ground_elevation_amsl_m": cfg.ground_elevation_amsl_m,
             "altitude_reference_verified_against_firmware": cfg.altitude_reference_verified,
             "propagation_mode": cfg.propagation_mode.value,
-            "disreef_transition_altitude_m": cfg.disreef_transition_altitude_m,
+            "parafoil_transition_altitude_m": cfg.parafoil_transition_altitude_m,
             "stage1_nominal_descent_rate_ms": cfg.stage1_nominal_descent_rate_ms,
             "stage2_nominal_descent_rate_ms": cfg.stage2_nominal_descent_rate_ms,
             "mission_profile_verified_against_official_spec": cfg.mission_profile_verified,
@@ -1010,17 +1010,17 @@ class PhysicsBaselinePredictor:
 
         if (
             cfg.propagation_mode == DescentPropagationMode.TWO_STAGE_CONFIGURABLE
-            and remaining_alt_m > cfg.disreef_transition_altitude_m
+            and remaining_alt_m > cfg.parafoil_transition_altitude_m
         ):
-            alt_stage1 = remaining_alt_m - cfg.disreef_transition_altitude_m
-            alt_stage2 = cfg.disreef_transition_altitude_m
+            alt_stage1 = remaining_alt_m - cfg.parafoil_transition_altitude_m
+            alt_stage2 = cfg.parafoil_transition_altitude_m
             v_stage1 = max(descent_rate_ms, cfg.min_descent_rate_ms)
             v_stage2 = max(cfg.stage2_nominal_descent_rate_ms, cfg.min_descent_rate_ms)
             stage1_t_s = round(alt_stage1 / v_stage1, 4)
             stage2_t_s = round(alt_stage2 / v_stage2, 4)
             t_rem_s = (alt_stage1 / v_stage1) + (alt_stage2 / v_stage2)
             prop_mode_used = (
-                f"TWO_STAGE_CONFIGURABLE(h_dr={cfg.disreef_transition_altitude_m:.0f}m,"
+                f"TWO_STAGE_CONFIGURABLE(h_tr={cfg.parafoil_transition_altitude_m:.0f}m,"
                 f"v2={v_stage2:.2f}m/s)"
             )
         else:

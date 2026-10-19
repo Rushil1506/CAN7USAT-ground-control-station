@@ -9,19 +9,31 @@ interface ThreeAttitudeViewportProps {
   isStale?: boolean;
 }
 
-export const ThreeAttitudeViewport: React.FC<ThreeAttitudeViewportProps> = ({
-  latestPacket,
-  telemetrySource = 'SIMULATION',
-  isStale = false,
-}) => {
-  const mountRef = useRef<HTMLDivElement | null>(null);
-  const satelliteGroupRef = useRef<THREE.Group | null>(null);
-  const [wireframeMode, setWireframeMode] = useState<boolean>(false);
-  const [manualControl, setManualControl] = useState<boolean>(false);
+export interface AttitudeViewportState {
+  rollDeg: number;
+  pitchDeg: number;
+  yawDeg: number;
+  hasAttitudeData: boolean;
+  hasYaw: boolean;
+  manualControl: boolean;
+  isDragging: boolean;
+}
 
-  const isSim = telemetrySource === 'SIMULATION';
+export interface MeshEulerRad {
+  x: number;
+  y: number;
+  z: number;
+}
 
-  // Validate roll and pitch independently from yaw so live packets without yaw do not invent yaw
+/**
+ * Pure helper computing attitude viewport state from a telemetry packet and interaction flags.
+ * Exported for deterministic regression testing of null -> live packet arrival and manual drag persistence.
+ */
+export function deriveAttitudeViewportState(
+  latestPacket: TelemetryPacket | null,
+  manualControl: boolean,
+  isDragging: boolean
+): AttitudeViewportState {
   const hasRollPitch =
     latestPacket !== null &&
     typeof latestPacket.roll === 'number' &&
@@ -34,12 +46,89 @@ export const ThreeAttitudeViewport: React.FC<ThreeAttitudeViewportProps> = ({
     typeof latestPacket.yaw === 'number' &&
     Number.isFinite(latestPacket.yaw);
 
-  const hasAttitudeData = hasRollPitch;
+  return {
+    rollDeg: hasRollPitch ? latestPacket!.roll! : 0,
+    pitchDeg: hasRollPitch ? latestPacket!.pitch! : 0,
+    yawDeg: hasYaw ? latestPacket!.yaw! : 0,
+    hasAttitudeData: hasRollPitch,
+    hasYaw,
+    manualControl,
+    isDragging,
+  };
+}
 
-  const roll = hasRollPitch ? latestPacket!.roll! : 0;
-  const pitch = hasRollPitch ? latestPacket!.pitch! : 0;
-  // When yaw is null (live serial), hold 3D mesh Y-axis at 0 without reporting a synthetic yaw reading
-  const meshYaw = hasYaw ? latestPacket!.yaw! : 0;
+/**
+ * Computes the next 3D mesh Euler rotation (radians) on an animation frame or telemetry update.
+ * When `isDragging` or `manualControl` is active, preserves the current manual rotation.
+ * When telemetry control is active and `hasAttitudeData` is true, applies telemetry pitch/yaw/roll.
+ */
+export function computeNextMeshRotation(
+  currentRotation: MeshEulerRad,
+  state: AttitudeViewportState
+): MeshEulerRad {
+  if (state.isDragging || state.manualControl || !state.hasAttitudeData) {
+    return currentRotation;
+  }
+  return {
+    x: THREE.MathUtils.degToRad(state.pitchDeg),
+    y: THREE.MathUtils.degToRad(state.yawDeg),
+    z: THREE.MathUtils.degToRad(state.rollDeg),
+  };
+}
+
+export const ThreeAttitudeViewport: React.FC<ThreeAttitudeViewportProps> = ({
+  latestPacket,
+  telemetrySource = 'SIMULATION',
+  isStale = false,
+}) => {
+  const mountRef = useRef<HTMLDivElement | null>(null);
+  const satelliteGroupRef = useRef<THREE.Group | null>(null);
+  const bodyMaterialRef = useRef<THREE.MeshStandardMaterial | null>(null);
+  const [wireframeMode, setWireframeMode] = useState<boolean>(false);
+  const [manualControl, setManualControl] = useState<boolean>(false);
+  const isDraggingRef = useRef<boolean>(false);
+
+  const isSim = telemetrySource === 'SIMULATION';
+
+  const derived = deriveAttitudeViewportState(
+    latestPacket,
+    manualControl,
+    isDraggingRef.current
+  );
+  const {
+    rollDeg: roll,
+    pitchDeg: pitch,
+    yawDeg: meshYaw,
+    hasAttitudeData,
+    hasYaw,
+  } = derived;
+  const hasRollPitch = hasAttitudeData;
+
+  // Live ref read by the 60fps requestAnimationFrame loop to prevent stale mount closures
+  const liveStateRef = useRef<AttitudeViewportState>(derived);
+  liveStateRef.current = derived;
+
+  const handleResetView = () => {
+    isDraggingRef.current = false;
+    liveStateRef.current = {
+      ...liveStateRef.current,
+      manualControl: false,
+      isDragging: false,
+    };
+    setManualControl(false);
+    if (satelliteGroupRef.current) {
+      if (liveStateRef.current.hasAttitudeData) {
+        satelliteGroupRef.current.rotation.set(
+          THREE.MathUtils.degToRad(liveStateRef.current.pitchDeg),
+          THREE.MathUtils.degToRad(liveStateRef.current.yawDeg),
+          THREE.MathUtils.degToRad(liveStateRef.current.rollDeg),
+          'XYZ'
+        );
+      } else {
+        satelliteGroupRef.current.rotation.set(0, 0, 0, 'XYZ');
+      }
+    }
+  };
 
   useEffect(() => {
     const mount = mountRef.current;
@@ -52,9 +141,9 @@ export const ThreeAttitudeViewport: React.FC<ThreeAttitudeViewportProps> = ({
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(0xf1f5f9);
 
-    const camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 1000);
-    camera.position.set(0, 2.4, 5.8);
-    camera.lookAt(0, 0, 0);
+    const camera = new THREE.PerspectiveCamera(42, width / height, 0.1, 1000);
+    camera.position.set(0, 1.6, 6.8);
+    camera.lookAt(0, 1.0, 0);
 
     const renderer = new THREE.WebGLRenderer({
       antialias: true,
@@ -65,17 +154,22 @@ export const ThreeAttitudeViewport: React.FC<ThreeAttitudeViewportProps> = ({
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
     mount.appendChild(renderer.domElement);
 
-    // 2. Clean Studio Lighting
-    const ambientLight = new THREE.AmbientLight(0xffffff, 1.05);
+    // 2. Clean Studio Lighting & Silhouette Contrast
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.8);
     scene.add(ambientLight);
 
-    const keyLight = new THREE.DirectionalLight(0xffffff, 1.35);
-    keyLight.position.set(5, 8, 6);
+    const keyLight = new THREE.DirectionalLight(0xffffff, 1.45);
+    keyLight.position.set(5, 9, 6);
     scene.add(keyLight);
 
-    const fillLight = new THREE.DirectionalLight(0xcbd5e1, 0.75);
-    fillLight.position.set(-5, -4, -4);
+    const fillLight = new THREE.DirectionalLight(0x94a3b8, 0.6);
+    fillLight.position.set(-5, -3, -4);
     scene.add(fillLight);
+
+    // Back rim light for crisp silhouette definition against light background
+    const rimLight = new THREE.DirectionalLight(0x38bdf8, 0.5);
+    rimLight.position.set(0, 4, -7);
+    scene.add(rimLight);
 
     // 3. Coordinate Ground Plane Grid (Subtle slate reference grid on light background)
     const grid = new THREE.GridHelper(10, 20, 0x94a3b8, 0xcbd5e1);
@@ -89,61 +183,215 @@ export const ThreeAttitudeViewport: React.FC<ThreeAttitudeViewportProps> = ({
 
     const disposables: { dispose: () => void }[] = [];
 
-    // Main CanSat Chassis Cylinder
-    const bodyGeo = new THREE.CylinderGeometry(0.78, 0.78, 2.2, 28);
+    // --- A. Main CanSat Cylindrical Chassis ---
+    const bodyGeo = new THREE.CylinderGeometry(0.72, 0.72, 2.0, 32);
     const bodyMat = new THREE.MeshStandardMaterial({
-      color: 0x334155,
-      metalness: 0.45,
-      roughness: 0.35,
+      color: 0x1e293b,
+      metalness: 0.6,
+      roughness: 0.28,
       wireframe: wireframeMode,
     });
+    bodyMaterialRef.current = bodyMat;
     const bodyMesh = new THREE.Mesh(bodyGeo, bodyMat);
     cansatGroup.add(bodyMesh);
     disposables.push(bodyGeo, bodyMat);
 
-    // Photovoltaic Solar Cell Rings (Cobalt Blue Accent)
-    const stripGeo = new THREE.CylinderGeometry(0.79, 0.79, 0.38, 28);
-    const stripMat = new THREE.MeshStandardMaterial({
-      color: 0x1d4ed8,
-      roughness: 0.25,
-      metalness: 0.65,
+    // End Caps (Top and Bottom Bulkheads)
+    const capGeo = new THREE.CylinderGeometry(0.75, 0.75, 0.08, 32);
+    const capMat = new THREE.MeshStandardMaterial({
+      color: 0x475569,
+      metalness: 0.8,
+      roughness: 0.2,
     });
-    const stripMesh1 = new THREE.Mesh(stripGeo, stripMat);
-    stripMesh1.position.y = 0.52;
-    cansatGroup.add(stripMesh1);
+    const topCap = new THREE.Mesh(capGeo, capMat);
+    topCap.position.y = 1.04;
+    cansatGroup.add(topCap);
 
-    const stripMesh2 = new THREE.Mesh(stripGeo, stripMat);
-    stripMesh2.position.y = -0.52;
-    cansatGroup.add(stripMesh2);
-    disposables.push(stripGeo, stripMat);
+    const bottomCap = new THREE.Mesh(capGeo, capMat);
+    bottomCap.position.y = -1.04;
+    cansatGroup.add(bottomCap);
+    disposables.push(capGeo, capMat);
 
-    // Telemetry Antenna Whip
-    const antennaGeo = new THREE.CylinderGeometry(0.018, 0.018, 1.1, 8);
-    const antennaMat = new THREE.MeshBasicMaterial({ color: 0xb45309 });
+    // Avionics / Payload Bay Inspection Band
+    const bayGeo = new THREE.CylinderGeometry(0.73, 0.73, 0.6, 32);
+    const bayMat = new THREE.MeshStandardMaterial({
+      color: 0x0f172a,
+      metalness: 0.35,
+      roughness: 0.25,
+    });
+    const bayMesh = new THREE.Mesh(bayGeo, bayMat);
+    bayMesh.position.y = 0.0;
+    cansatGroup.add(bayMesh);
+    disposables.push(bayGeo, bayMat);
+
+    // Sensor Stack Internal Rings
+    const ringGeo = new THREE.TorusGeometry(0.735, 0.015, 8, 32);
+    const ringMat = new THREE.MeshBasicMaterial({ color: 0x10b981 });
+    const ring1 = new THREE.Mesh(ringGeo, ringMat);
+    ring1.rotation.x = Math.PI / 2;
+    ring1.position.y = 0.15;
+    cansatGroup.add(ring1);
+    const ring2 = new THREE.Mesh(ringGeo, ringMat);
+    ring2.rotation.x = Math.PI / 2;
+    ring2.position.y = -0.15;
+    cansatGroup.add(ring2);
+    disposables.push(ringGeo, ringMat);
+
+    // --- B. Dual Steering Servos (Mounted on Top Bulkhead) ---
+    const servoBodyGeo = new THREE.BoxGeometry(0.22, 0.16, 0.24);
+    const servoMat = new THREE.MeshStandardMaterial({
+      color: 0x334155,
+      roughness: 0.6,
+      metalness: 0.2,
+    });
+    const portServo = new THREE.Mesh(servoBodyGeo, servoMat);
+    portServo.position.set(-0.36, 1.15, 0);
+    cansatGroup.add(portServo);
+
+    const stbdServo = new THREE.Mesh(servoBodyGeo, servoMat);
+    stbdServo.position.set(0.36, 1.15, 0);
+    cansatGroup.add(stbdServo);
+    disposables.push(servoBodyGeo, servoMat);
+
+    // Servo Horns / Actuator Arms (Left: Cobalt, Right: Amber)
+    const hornGeo = new THREE.BoxGeometry(0.06, 0.04, 0.2);
+    const portHornMat = new THREE.MeshStandardMaterial({ color: 0x2563eb, metalness: 0.5 });
+    const portHorn = new THREE.Mesh(hornGeo, portHornMat);
+    portHorn.position.set(-0.36, 1.24, 0.06);
+    cansatGroup.add(portHorn);
+
+    const stbdHornMat = new THREE.MeshStandardMaterial({ color: 0xd97706, metalness: 0.5 });
+    const stbdHorn = new THREE.Mesh(hornGeo, stbdHornMat);
+    stbdHorn.position.set(0.36, 1.24, 0.06);
+    cansatGroup.add(stbdHorn);
+    disposables.push(hornGeo, portHornMat, stbdHornMat);
+
+    // --- C. Antennas & Optical Payload Port ---
+    // RF Whip Antenna
+    const antennaGeo = new THREE.CylinderGeometry(0.014, 0.014, 0.75, 8);
+    const antennaMat = new THREE.MeshStandardMaterial({
+      color: 0xd97706,
+      metalness: 0.9,
+      roughness: 0.2,
+    });
     const antennaMesh = new THREE.Mesh(antennaGeo, antennaMat);
-    antennaMesh.position.set(0, 1.65, 0);
+    antennaMesh.position.set(0, 1.45, -0.32);
     cansatGroup.add(antennaMesh);
     disposables.push(antennaGeo, antennaMat);
 
-    // Parachute Reefing Harness Ring (Teal Accent)
-    const ringGeo = new THREE.TorusGeometry(0.82, 0.028, 10, 28);
-    const ringMat = new THREE.MeshBasicMaterial({ color: 0x0f766e });
-    const ringMesh = new THREE.Mesh(ringGeo, ringMat);
-    ringMesh.rotation.x = Math.PI / 2;
-    ringMesh.position.y = 1.1;
-    cansatGroup.add(ringMesh);
-    disposables.push(ringGeo, ringMat);
+    // GNSS Patch Antenna
+    const patchGeo = new THREE.BoxGeometry(0.2, 0.04, 0.2);
+    const patchMat = new THREE.MeshStandardMaterial({ color: 0xe2e8f0, roughness: 0.3 });
+    const patchMesh = new THREE.Mesh(patchGeo, patchMat);
+    patchMesh.position.set(0, 1.1, 0.26);
+    cansatGroup.add(patchMesh);
+    disposables.push(patchGeo, patchMat);
 
-    // Nadir Camera Optical Port
-    const lensGeo = new THREE.SphereGeometry(0.12, 12, 12);
+    // Nadir Camera / Sensor Lens Port
+    const lensGeo = new THREE.CylinderGeometry(0.16, 0.16, 0.08, 16);
     const lensMat = new THREE.MeshStandardMaterial({
       color: 0x0284c7,
       roughness: 0.15,
+      metalness: 0.8,
     });
     const lensMesh = new THREE.Mesh(lensGeo, lensMat);
-    lensMesh.position.set(0, 0, 0.8);
+    lensMesh.position.set(0, -1.1, 0);
     cansatGroup.add(lensMesh);
     disposables.push(lensGeo, lensMat);
+
+    // --- D. Drogue Parachute Assembly (High-Altitude Descent: 1000m -> ~600m) ---
+    // Drogue Riser Bridle
+    const drogueLinePts = [new THREE.Vector3(0, 1.08, 0), new THREE.Vector3(0, 1.85, 0)];
+    const drogueLineGeo = new THREE.BufferGeometry().setFromPoints(drogueLinePts);
+    const drogueLineMat = new THREE.LineBasicMaterial({ color: 0x94a3b8 });
+    const drogueLine = new THREE.Line(drogueLineGeo, drogueLineMat);
+    cansatGroup.add(drogueLine);
+    disposables.push(drogueLineGeo, drogueLineMat);
+
+    // Drogue Chute Canopy (Orange Hemispherical Cone)
+    const drogueGeo = new THREE.ConeGeometry(0.36, 0.32, 16, 1, true);
+    const drogueMat = new THREE.MeshStandardMaterial({
+      color: 0xf97316,
+      side: THREE.DoubleSide,
+      roughness: 0.5,
+    });
+    const drogueMesh = new THREE.Mesh(drogueGeo, drogueMat);
+    drogueMesh.rotation.x = Math.PI; // Open cone facing downward
+    drogueMesh.position.set(0, 2.05, 0);
+    cansatGroup.add(drogueMesh);
+    disposables.push(drogueGeo, drogueMat);
+
+    // --- E. Main Steerable Parafoil Deployment Assembly (~600m to Landing) ---
+    // Ram-Air Airfoil Wing Canopy (Steerable Parafoil with cell sections)
+    const parafoilGroup = new THREE.Group();
+    cansatGroup.add(parafoilGroup);
+
+    const centerCellGeo = new THREE.BoxGeometry(0.72, 0.12, 0.68);
+    const wingMat = new THREE.MeshStandardMaterial({
+      color: 0x1d4ed8,
+      roughness: 0.4,
+      metalness: 0.1,
+    });
+    const centerCell = new THREE.Mesh(centerCellGeo, wingMat);
+    centerCell.position.set(0, 3.1, 0);
+    parafoilGroup.add(centerCell);
+
+    const outerCellGeo = new THREE.BoxGeometry(0.76, 0.11, 0.65);
+    const outerCellMat = new THREE.MeshStandardMaterial({
+      color: 0xf59e0b,
+      roughness: 0.4,
+      metalness: 0.1,
+    });
+    const leftCell = new THREE.Mesh(outerCellGeo, outerCellMat);
+    leftCell.position.set(-0.72, 3.05, 0);
+    leftCell.rotation.z = 0.08; // slight anhedral arch
+    parafoilGroup.add(leftCell);
+
+    const rightCell = new THREE.Mesh(outerCellGeo, outerCellMat);
+    rightCell.position.set(0.72, 3.05, 0);
+    rightCell.rotation.z = -0.08;
+    parafoilGroup.add(rightCell);
+    disposables.push(centerCellGeo, outerCellGeo, wingMat, outerCellMat);
+
+    // Suspension Lines (Connecting CanSat harness to Parafoil lower surface)
+    const suspensionPts = [
+      new THREE.Vector3(-0.2, 1.08, 0),
+      new THREE.Vector3(-0.7, 3.0, -0.2),
+      new THREE.Vector3(-0.2, 1.08, 0),
+      new THREE.Vector3(-0.15, 3.04, -0.2),
+      new THREE.Vector3(0.2, 1.08, 0),
+      new THREE.Vector3(0.15, 3.04, -0.2),
+      new THREE.Vector3(0.2, 1.08, 0),
+      new THREE.Vector3(0.7, 3.0, -0.2),
+    ];
+    const suspGeo = new THREE.BufferGeometry().setFromPoints(suspensionPts);
+    const suspMat = new THREE.LineBasicMaterial({ color: 0x64748b, transparent: true, opacity: 0.75 });
+    const suspLines = new THREE.LineSegments(suspGeo, suspMat);
+    parafoilGroup.add(suspLines);
+    disposables.push(suspGeo, suspMat);
+
+    // --- F. Dual Steering Lines (Left and Right Servos -> Parafoil Trailing Edge) ---
+    // Left Steering Line (Cyan / Blue)
+    const leftSteeringPts = [
+      new THREE.Vector3(-0.36, 1.25, 0.15),
+      new THREE.Vector3(-1.0, 3.02, 0.32),
+    ];
+    const leftSteerGeo = new THREE.BufferGeometry().setFromPoints(leftSteeringPts);
+    const leftSteerMat = new THREE.LineBasicMaterial({ color: 0x0284c7 });
+    const leftSteerLine = new THREE.Line(leftSteerGeo, leftSteerMat);
+    parafoilGroup.add(leftSteerLine);
+    disposables.push(leftSteerGeo, leftSteerMat);
+
+    // Right Steering Line (Amber / Orange)
+    const rightSteeringPts = [
+      new THREE.Vector3(0.36, 1.25, 0.15),
+      new THREE.Vector3(1.0, 3.02, 0.32),
+    ];
+    const rightSteerGeo = new THREE.BufferGeometry().setFromPoints(rightSteeringPts);
+    const rightSteerMat = new THREE.LineBasicMaterial({ color: 0xf59e0b });
+    const rightSteerLine = new THREE.Line(rightSteerGeo, rightSteerMat);
+    parafoilGroup.add(rightSteerLine);
+    disposables.push(rightSteerGeo, rightSteerMat);
 
     // 3D Body Axes Helper (X - Red Pitch, Y - Green Yaw/Spin axis, Z - Blue Roll)
     const axesHelper = new THREE.AxesHelper(1.65);
@@ -154,17 +402,21 @@ export const ThreeAttitudeViewport: React.FC<ThreeAttitudeViewportProps> = ({
     disposables.push(axesHelper.geometry);
 
     // Mouse Drag Orbit Controls
-    let isDragging = false;
     let previousMousePosition = { x: 0, y: 0 };
 
     const onMouseDown = (e: MouseEvent) => {
-      isDragging = true;
+      isDraggingRef.current = true;
+      liveStateRef.current = {
+        ...liveStateRef.current,
+        manualControl: true,
+        isDragging: true,
+      };
       setManualControl(true);
       previousMousePosition = { x: e.clientX, y: e.clientY };
     };
 
     const onMouseMove = (e: MouseEvent) => {
-      if (!isDragging) return;
+      if (!isDraggingRef.current) return;
       const deltaX = e.clientX - previousMousePosition.x;
       const deltaY = e.clientY - previousMousePosition.y;
 
@@ -175,7 +427,12 @@ export const ThreeAttitudeViewport: React.FC<ThreeAttitudeViewportProps> = ({
     };
 
     const onMouseUp = () => {
-      isDragging = false;
+      if (!isDraggingRef.current) return;
+      isDraggingRef.current = false;
+      liveStateRef.current = {
+        ...liveStateRef.current,
+        isDragging: false,
+      };
     };
 
     const domElement = renderer.domElement;
@@ -187,11 +444,20 @@ export const ThreeAttitudeViewport: React.FC<ThreeAttitudeViewportProps> = ({
     const animate = () => {
       animationFrameId = requestAnimationFrame(animate);
 
-      if (satelliteGroupRef.current && !isDragging && hasAttitudeData) {
-        const radRoll = THREE.MathUtils.degToRad(roll);
-        const radPitch = THREE.MathUtils.degToRad(pitch);
-        const radYaw = THREE.MathUtils.degToRad(meshYaw);
-        satelliteGroupRef.current.rotation.set(radPitch, radYaw, radRoll, 'XYZ');
+      const group = satelliteGroupRef.current;
+      const currentState = liveStateRef.current;
+      if (group) {
+        const nextRot = computeNextMeshRotation(
+          { x: group.rotation.x, y: group.rotation.y, z: group.rotation.z },
+          currentState
+        );
+        if (
+          !currentState.isDragging &&
+          !currentState.manualControl &&
+          currentState.hasAttitudeData
+        ) {
+          group.rotation.set(nextRot.x, nextRot.y, nextRot.z, 'XYZ');
+        }
       }
 
       renderer.render(scene, camera);
@@ -213,6 +479,7 @@ export const ThreeAttitudeViewport: React.FC<ThreeAttitudeViewportProps> = ({
     return () => {
       resizeObserver.disconnect();
       cancelAnimationFrame(animationFrameId);
+      isDraggingRef.current = false;
 
       domElement.removeEventListener('mousedown', onMouseDown);
       window.removeEventListener('mousemove', onMouseMove);
@@ -226,21 +493,40 @@ export const ThreeAttitudeViewport: React.FC<ThreeAttitudeViewportProps> = ({
         }
       });
 
+      bodyMaterialRef.current = null;
+      satelliteGroupRef.current = null;
       scene.clear();
       renderer.dispose();
 
-      if (mount && renderer.domElement) {
+      if (mount && renderer.domElement && mount.contains(renderer.domElement)) {
         mount.removeChild(renderer.domElement);
       }
     };
+  }, []);
+
+  // Update wireframe mode in-place without destroying WebGL context or losing manual drag angle
+  useEffect(() => {
+    if (bodyMaterialRef.current) {
+      bodyMaterialRef.current.wireframe = wireframeMode;
+      bodyMaterialRef.current.needsUpdate = true;
+    }
   }, [wireframeMode]);
 
+  // Synchronize orientation immediately when telemetry updates and manual orbit control is inactive
   useEffect(() => {
-    if (satelliteGroupRef.current && !manualControl && hasAttitudeData) {
-      const radRoll = THREE.MathUtils.degToRad(roll);
-      const radPitch = THREE.MathUtils.degToRad(pitch);
-      const radYaw = THREE.MathUtils.degToRad(meshYaw);
-      satelliteGroupRef.current.rotation.set(radPitch, radYaw, radRoll, 'XYZ');
+    const group = satelliteGroupRef.current;
+    const currentState = liveStateRef.current;
+    if (
+      group &&
+      !currentState.isDragging &&
+      !currentState.manualControl &&
+      currentState.hasAttitudeData
+    ) {
+      const nextRot = computeNextMeshRotation(
+        { x: group.rotation.x, y: group.rotation.y, z: group.rotation.z },
+        currentState
+      );
+      group.rotation.set(nextRot.x, nextRot.y, nextRot.z, 'XYZ');
     }
   }, [roll, pitch, meshYaw, manualControl, hasAttitudeData]);
 
@@ -283,7 +569,7 @@ export const ThreeAttitudeViewport: React.FC<ThreeAttitudeViewportProps> = ({
 
           <button
             type="button"
-            onClick={() => setManualControl(false)}
+            onClick={handleResetView}
             title="Reset to Live Telemetry Orientation"
             className="px-2 py-0.5 bg-[var(--bg-surface-2)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] border border-[var(--border-subtle)] cursor-pointer rounded-[var(--radius-xs)] font-medium transition-colors"
           >
@@ -294,7 +580,7 @@ export const ThreeAttitudeViewport: React.FC<ThreeAttitudeViewportProps> = ({
       </div>
 
       {/* 3D WebGL Canvas Viewport Area */}
-      <div className="flex-1 relative bg-[#f1f5f9] min-h-[180px]">
+      <div className="flex-1 relative bg-[#f1f5f9] min-h-[130px]">
         <div
           ref={mountRef}
           className="w-full h-full cursor-grab active:cursor-grabbing"
@@ -318,18 +604,18 @@ export const ThreeAttitudeViewport: React.FC<ThreeAttitudeViewportProps> = ({
         )}
 
         {/* Axis Reference Legend - Top Right */}
-        <div className="absolute top-2.5 right-2.5 bg-[var(--bg-surface-1)]/95 border border-[var(--border-subtle)] shadow-[var(--shadow-xs)] px-2.5 py-1.5 font-mono-data text-[10px] text-[var(--text-secondary)] flex flex-col gap-0.5 pointer-events-none rounded-[var(--radius-sm)] backdrop-blur-xs">
+        <div className="absolute top-2 right-2 bg-[var(--bg-surface-1)]/95 border border-[var(--border-subtle)] shadow-[var(--shadow-xs)] px-2.5 py-1 font-mono-data text-[10px] text-[var(--text-secondary)] flex items-center gap-2.5 pointer-events-none rounded-[var(--radius-xs)] backdrop-blur-xs">
           <div className="flex items-center gap-1.5">
-            <span className="w-2.5 h-0.5 bg-[#b91c1c]"></span>
-            <span>X: Pitch (Tilt)</span>
+            <span className="w-2.5 h-1 rounded-[1px] bg-[#b91c1c]"></span>
+            <span>X: Pitch</span>
           </div>
           <div className="flex items-center gap-1.5">
-            <span className="w-2.5 h-0.5 bg-[#15803d]"></span>
-            <span>Y: Yaw ({hasYaw ? 'Spin' : 'Not in CSV'})</span>
+            <span className="w-2.5 h-1 rounded-[1px] bg-[#15803d]"></span>
+            <span>Y: Yaw</span>
           </div>
           <div className="flex items-center gap-1.5">
-            <span className="w-2.5 h-0.5 bg-[#1d4ed8]"></span>
-            <span>Z: Roll (Bank)</span>
+            <span className="w-2.5 h-1 rounded-[1px] bg-[#1d4ed8]"></span>
+            <span>Z: Roll</span>
           </div>
         </div>
 

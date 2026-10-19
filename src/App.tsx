@@ -19,17 +19,27 @@ import { SerialLinkPanel } from './components/SerialLinkPanel';
 import { MissionControlPanel } from './components/MissionControlPanel';
 import { FlightStatePanel } from './components/FlightStatePanel';
 import { RawReadoutsPanel } from './components/RawReadoutsPanel';
-import { TerminalDrawer } from './components/TerminalDrawer';
-import { DeployConfirmationModal } from './components/DeployConfirmationModal';
+import { TerminalDrawer, filterLogsBySource, getLogBadgeLabel } from './components/TerminalDrawer';
+import { RadioAssignmentPanel } from './components/RadioAssignmentPanel';
 import { SettingsModal } from './components/SettingsModal';
 import { PreflightChecklistPanel } from './components/PreflightChecklistPanel';
 import { JudgeReportPanel } from './components/JudgeReportPanel';
 import { LandingPredictorWorkspace } from './components/LandingPredictorWorkspace';
+import {
+  OverviewPreferences,
+  getBrowserStorage,
+  isOverviewWidgetVisible,
+  loadOverviewPreferences,
+  resolveOverviewStripColumnsClass,
+  saveOverviewPreferences,
+  shouldShowLinkAlertBanner,
+} from './services/overviewPreferences';
 
 import { globalTelemetryEngine } from './services/telemetrySimulator';
 import { globalSerialTelemetry } from './services/serialTelemetry';
 import {
   DEFAULT_PREDICTOR_CONFIG,
+  PredictorConfigPayload,
   computeLocalPhysicsPrediction,
 } from './services/landingPredictorClient';
 import {
@@ -46,11 +56,18 @@ import { TEAM_INFO } from './constants';
 
 const STALE_PACKET_THRESHOLD_SEC = 3.0;
 
+const MAX_HISTORY_PACKETS = 1500;
+
 export default function App() {
   const [activeTab, setActiveTab] = useState<ActiveTab>('OVERVIEW');
   const [telemetrySource, setTelemetrySource] =
     useState<TelemetrySource>('SIMULATION');
   const telemetrySourceRef = useRef<TelemetrySource>('SIMULATION');
+
+  // Persistent shared predictor configuration & target coordinates across all workspaces
+  const [predictorConfig, setPredictorConfig] = useState<PredictorConfigPayload>(() => ({
+    ...DEFAULT_PREDICTOR_CONFIG,
+  }));
 
   // Isolated Simulation Telemetry State
   const [simLatestPacket, setSimLatestPacket] =
@@ -79,13 +96,22 @@ export default function App() {
 
   // Modals & Drawers
   const [isTerminalOpen, setIsTerminalOpen] = useState<boolean>(false);
-  const [isDeployModalOpen, setIsDeployModalOpen] = useState<boolean>(false);
   const [isSettingsModalOpen, setIsSettingsModalOpen] =
     useState<boolean>(false);
 
+  // Overview workspace widget display preferences (persisted to localStorage)
+  const [overviewPrefs, setOverviewPrefs] = useState<OverviewPreferences>(() =>
+    loadOverviewPreferences(getBrowserStorage())
+  );
+
+  const handleUpdateOverviewPrefs = (next: OverviewPreferences) => {
+    setOverviewPrefs(next);
+    saveOverviewPreferences(getBrowserStorage(), next);
+  };
+
   // Simulation Serial Port Config
   const [serialConfig, setSerialConfig] = useState<SerialConfig>({
-    port: 'COM10 (Zeminet LoRa 865MHz)',
+    port: 'COM10 (Zeminet LoRa 865.50MHz)',
     baudRate: 115200,
     connected: true,
     rxCount: 1240,
@@ -115,7 +141,7 @@ export default function App() {
     const timeStr = now.toISOString().split('T')[1].slice(0, 8);
     setRawLogs((prev) => {
       const next = [...prev, { time: timeStr, text, type, source }];
-      if (next.length > 300) next.shift();
+      if (next.length > 500) next.shift();
       return next;
     });
   };
@@ -133,7 +159,7 @@ export default function App() {
 
         setSimHistoryPackets((prev) => {
           const next = [...prev, packet];
-          if (next.length > 300) next.shift();
+          if (next.length > MAX_HISTORY_PACKETS) next.shift();
           return next;
         });
 
@@ -170,7 +196,7 @@ export default function App() {
 
         setLiveHistoryPackets((prev) => {
           const next = [...prev, packet];
-          if (next.length > 300) next.shift();
+          if (next.length > MAX_HISTORY_PACKETS) next.shift();
           return next;
         });
 
@@ -385,12 +411,6 @@ export default function App() {
     }, 400);
   };
 
-  const handleConfirmDeploy = () => {
-    if (telemetrySource !== 'SIMULATION') return;
-    globalTelemetryEngine.triggerBurnwireDisreef();
-    handleSendCommand(`CMD,${TEAM_INFO.id},DISREEF,OVERRIDE`);
-    handleOverrideState(FlightStateCode.AEROBREAK_RELEASE);
-  };
 
   // Active telemetry state based on selected source
   const activeLatestPacket =
@@ -411,16 +431,100 @@ export default function App() {
       (packetAgeSeconds !== null &&
         packetAgeSeconds > STALE_PACKET_THRESHOLD_SEC));
 
-  // Overview Landing Predictor summary (source-isolated and gated)
+  // Overview Landing Predictor summary (source-isolated and gated, using shared predictorConfig)
   const overviewPrediction = useMemo(() => {
     return computeLocalPhysicsPrediction(
       activeHistoryPackets,
-      DEFAULT_PREDICTOR_CONFIG,
+      predictorConfig,
       telemetrySource,
       packetAgeSeconds,
       isLiveStale
     );
-  }, [activeHistoryPackets, telemetrySource, packetAgeSeconds, isLiveStale]);
+  }, [
+    activeHistoryPackets,
+    predictorConfig,
+    telemetrySource,
+    packetAgeSeconds,
+    isLiveStale,
+  ]);
+
+  // Source-isolated raw logs for the active telemetry source
+  const activeSourceLogs = useMemo(() => {
+    return filterLogsBySource(rawLogs, telemetrySource, 'all');
+  }, [rawLogs, telemetrySource]);
+
+  const handleUpdateSharedTarget = (lat: number | null, lon: number | null) => {
+    setPredictorConfig((prev) => ({
+      ...prev,
+      target_lat_deg: lat,
+      target_lon_deg: lon,
+    }));
+  };
+
+  // Overview workspace widget visibility (derived from preferences and active source)
+  const showMissionStrip = isOverviewWidgetVisible(
+    overviewPrefs,
+    'missionStrip',
+    telemetrySource
+  );
+  const showPrediction = isOverviewWidgetVisible(
+    overviewPrefs,
+    'landingPrediction',
+    telemetrySource
+  );
+  const showCharts = isOverviewWidgetVisible(
+    overviewPrefs,
+    'telemetryCharts',
+    telemetrySource
+  );
+  const showAttitude = isOverviewWidgetVisible(
+    overviewPrefs,
+    'attitude',
+    telemetrySource
+  );
+  const showMap = isOverviewWidgetVisible(
+    overviewPrefs,
+    'gpsMap',
+    telemetrySource
+  );
+  const showLink = isOverviewWidgetVisible(
+    overviewPrefs,
+    'linkStatus',
+    telemetrySource
+  );
+  const showFlightState = isOverviewWidgetVisible(
+    overviewPrefs,
+    'flightState',
+    telemetrySource
+  );
+  const showRawReadouts = isOverviewWidgetVisible(
+    overviewPrefs,
+    'rawReadouts',
+    telemetrySource
+  );
+  const showSimControls =
+    telemetrySource === 'SIMULATION' &&
+    isOverviewWidgetVisible(overviewPrefs, 'simControls', telemetrySource);
+
+  const showStrip = showMissionStrip || showPrediction;
+  const showSecondaryRow = showAttitude || showCharts;
+  const showLeftColumn = showMap || showSecondaryRow;
+  const showRightRail =
+    showFlightState || showRawReadouts || showLink || showSimControls;
+  const anyOverviewWidget = showStrip || showLeftColumn || showRightRail;
+
+  const showLinkAlertBanner = shouldShowLinkAlertBanner({
+    telemetrySource,
+    linkWidgetVisible: showLink,
+    serialState,
+    isStale: isLiveStale,
+    lastError: serialMetrics.lastError,
+  });
+
+  const stripColsClass = useMemo(
+    () => resolveOverviewStripColumnsClass(showMissionStrip, showPrediction),
+    [showMissionStrip, showPrediction]
+  );
 
   return (
     <div className="bg-[var(--bg-base)] text-[var(--text-primary)] h-screen flex flex-col overflow-hidden select-none">
@@ -436,7 +540,6 @@ export default function App() {
         liveBaudRate={liveBaudRate}
         isStale={isLiveStale}
         packetAgeSeconds={packetAgeSeconds}
-        onOpenDeployModal={() => setIsDeployModalOpen(true)}
         onOpenSettingsModal={() => setIsSettingsModalOpen(true)}
         onToggleTerminal={() => setIsTerminalOpen(!isTerminalOpen)}
         isTerminalOpen={isTerminalOpen}
@@ -444,215 +547,336 @@ export default function App() {
       />
 
       {/* Main Dashboard Workspace Content Area */}
-      <main className="flex-1 mt-15 p-2.5 bg-[var(--bg-base)] overflow-y-auto lg:overflow-hidden h-[calc(100vh-3.75rem)]">
-        {/* WORKSPACE 1: MISSION OVERVIEW */}
+      <main className="flex-1 min-h-0 min-w-0 p-2.5 bg-[var(--bg-base)] flex flex-col overflow-hidden">
+        {/* WORKSPACE 1: MISSION OVERVIEW (widgets controlled by local display preferences) */}
         {activeTab === 'OVERVIEW' && (
-          <div className="flex flex-col gap-2.5 h-full overflow-y-auto lg:overflow-hidden">
-            {/* Top Mission Health & Landing Predictor Status Summary Strip */}
-            <div className="grid grid-cols-2 md:grid-cols-5 gap-2 shrink-0">
-              {/* 1. Flight Phase */}
-              <div className="ops-card px-3 py-2 flex items-center justify-between gap-2">
-                <div className="min-w-0">
-                  <div className="text-[10px] font-semibold uppercase text-[var(--text-tertiary)] flex items-center gap-1">
-                    <Layers className="w-3 h-3 text-[var(--accent-cobalt)]" />
-                    Flight Phase (FSW)
-                  </div>
-                  <div className="font-mono-data text-xs sm:text-sm font-bold text-[var(--text-primary)] truncate mt-0.5">
-                    {activeLatestPacket?.fswStateName ?? 'STANDBY / NO DATA'}
-                  </div>
-                </div>
-                <span className="font-mono-data text-[10px] px-1.5 py-0.5 rounded-[var(--radius-xs)] bg-[var(--bg-surface-2)] text-[var(--text-secondary)] border border-[var(--border-subtle)] shrink-0">
-                  PKT #{activeLatestPacket?.packetNumber ?? '--'}
-                </span>
-              </div>
-
-              {/* 2. Altitude & Vertical Rate */}
-              <div className="ops-card px-3 py-2 flex items-center justify-between gap-2">
-                <div>
-                  <div className="text-[10px] font-semibold uppercase text-[var(--text-tertiary)] flex items-center gap-1">
-                    <Activity className="w-3 h-3 text-[var(--accent-teal)]" />
-                    Baro Alt / Rate
-                  </div>
-                  <div className="font-mono-data text-xs sm:text-sm font-bold text-[var(--text-primary)] mt-0.5 tabular-nums">
-                    {typeof activeLatestPacket?.altitude === 'number'
-                      ? `${activeLatestPacket.altitude.toFixed(1)} m`
-                      : 'UNAVAILABLE'}
-                  </div>
-                </div>
-                <div className="text-right font-mono-data text-[11px] text-[var(--accent-teal)] font-semibold tabular-nums">
-                  {typeof activeLatestPacket?.velocity === 'number'
-                    ? `${activeLatestPacket.velocity.toFixed(1)} m/s`
-                    : '--'}
-                </div>
-              </div>
-
-              {/* 3. GNSS Lock & Time */}
-              <div className="ops-card px-3 py-2 flex items-center justify-between gap-2">
-                <div>
-                  <div className="text-[10px] font-semibold uppercase text-[var(--text-tertiary)] flex items-center gap-1">
-                    <Satellite className="w-3 h-3 text-[var(--accent-cobalt)]" />
-                    GNSS Fix &amp; Sats
-                  </div>
-                  <div className="font-mono-data text-xs sm:text-sm font-bold text-[var(--text-primary)] mt-0.5">
-                    {activeLatestPacket?.gpsValid
-                      ? `${activeLatestPacket.gpsFixType} (${
-                          activeLatestPacket.gpsSats ?? 0
-                        } SATS)`
-                      : 'NO VALID FIX'}
-                  </div>
-                </div>
-                <div className="text-right font-mono-data text-[10px] text-[var(--text-secondary)] tabular-nums">
-                  <div>UTC {activeLatestPacket?.timestampUtc ?? '--:--:--'}</div>
-                  <div className="text-[var(--accent-cobalt)] font-semibold">
-                    IST {activeLatestPacket?.gnssTimeIst ?? '--:--:--'}
-                  </div>
-                </div>
-              </div>
-
-              {/* 4. Electrical Power & Link Health */}
-              <div className="ops-card px-3 py-2 flex items-center justify-between gap-2">
-                <div>
-                  <div className="text-[10px] font-semibold uppercase text-[var(--text-tertiary)] flex items-center gap-1">
-                    <Battery className="w-3 h-3 text-[var(--status-nominal)]" />
-                    2S Battery Pack
-                  </div>
-                  <div className="font-mono-data text-xs sm:text-sm font-bold text-[var(--status-nominal)] mt-0.5 tabular-nums">
-                    {typeof activeLatestPacket?.batteryVoltage === 'number'
-                      ? `${activeLatestPacket.batteryVoltage.toFixed(2)} V`
-                      : 'UNAVAILABLE'}
-                  </div>
-                </div>
-                <span
-                  className={`font-mono-data text-[10px] px-1.5 py-0.5 rounded-[var(--radius-xs)] border font-semibold ${
-                    telemetrySource === 'SIMULATION'
-                      ? 'bg-[var(--status-info-bg)] text-[var(--accent-cobalt)] border-[var(--accent-cobalt)]/25'
-                      : isLiveStale
-                      ? 'bg-[var(--status-warning-bg)] text-[var(--status-warning)] border-[var(--status-warning)]/40'
-                      : 'bg-[var(--status-nominal-bg)] text-[var(--status-nominal)] border-[var(--status-nominal)]/30'
-                  }`}
-                >
-                  {telemetrySource === 'SIMULATION'
-                    ? 'SIM 10Hz'
+          <div className="flex flex-col gap-2.5 h-full min-h-0 flex-1 overflow-y-auto lg:overflow-hidden" data-testid="overview-workspace">
+            {/* Essential live-link alert: remains visible even if the link widget is hidden by preference */}
+            {showLinkAlertBanner && (
+              <div
+                role="alert"
+                className="shrink-0 flex flex-wrap items-center justify-between gap-2 px-3 py-1.5 bg-[var(--status-warning-bg)] border border-[var(--status-warning)]/40 text-[var(--status-warning)] rounded-[var(--radius-sm)] font-mono-data text-[11px]"
+              >
+                <span className="flex items-center gap-1.5 font-semibold">
+                  <ShieldAlert className="w-3.5 h-3.5 shrink-0" />
+                  LIVE LINK:{' '}
+                  {serialState !== 'CONNECTED'
+                    ? `USB ${serialState}`
                     : isLiveStale
-                    ? 'STALE'
-                    : 'LIVE RX'}
+                    ? 'STALE TELEMETRY'
+                    : 'NOTICE'}
+                  {serialMetrics.lastError ? ` — ${serialMetrics.lastError}` : ''}
                 </span>
-              </div>
-
-              {/* 5. Landing Predictor Summary Card with Quick Action */}
-              <div className="col-span-2 md:col-span-1 ops-card px-3 py-2 flex items-center justify-between gap-2 bg-[var(--bg-surface-2)]/60">
-                <div className="min-w-0">
-                  <div className="text-[10px] font-semibold uppercase text-[var(--text-tertiary)] flex items-center gap-1">
-                    <Crosshair className="w-3 h-3 text-[var(--accent-teal)]" />
-                    Landing Predictor
-                  </div>
-                  {overviewPrediction.valid && overviewPrediction.prediction ? (
-                    <div className="font-mono-data text-[11px] font-bold text-[var(--accent-teal)] truncate mt-0.5 tabular-nums">
-                      {overviewPrediction.prediction.predicted_lat_deg.toFixed(4)}°N,{' '}
-                      {overviewPrediction.prediction.predicted_lon_deg.toFixed(4)}°E (T-
-                      {overviewPrediction.prediction.estimated_time_to_landing_s.toFixed(
-                        0
-                      )}
-                      s)
-                    </div>
-                  ) : (
-                    <div className="font-mono-data text-[11px] font-semibold text-[var(--status-warning)] truncate mt-0.5 flex items-center gap-1">
-                      <ShieldAlert className="w-3 h-3 shrink-0" />
-                      <span>GATED: {overviewPrediction.reason_code}</span>
-                    </div>
-                  )}
-                </div>
                 <button
                   type="button"
-                  onClick={() => setActiveTab('LANDING_PREDICTOR')}
-                  title="Open Dedicated Landing Predictor Workspace"
-                  className="px-2 py-1 bg-[var(--accent-teal)] hover:opacity-95 text-white rounded-[var(--radius-xs)] text-[10px] font-semibold cursor-pointer flex items-center gap-1 shrink-0 transition-opacity"
+                  onClick={() => setActiveTab('COMMS_LOGS')}
+                  className="underline cursor-pointer font-semibold"
                 >
-                  {overviewPrediction.valid ? (
-                    <CheckCircle2 className="w-3 h-3" />
-                  ) : (
-                    <ExternalLink className="w-3 h-3" />
-                  )}
-                  <span>Open</span>
+                  Open Communications
                 </button>
               </div>
-            </div>
+            )}
 
-            {/* Main Overview Body: Left/Center Charts + Spatial & Right Control Rail */}
-            <div className="flex-1 flex flex-col lg:flex-row gap-2.5 overflow-hidden min-h-[520px] lg:min-h-0">
-              {/* Left & Center Main Column */}
-              <div className="flex-1 flex flex-col gap-2.5 overflow-hidden min-h-[500px] lg:min-h-0 lg:h-full">
-                <div className="h-[58%] min-h-[290px]">
-                  <TelemetryChartPanel
-                    history={activeHistoryPackets}
-                    latestPacket={activeLatestPacket}
-                    telemetrySource={telemetrySource}
-                    isStale={isLiveStale}
-                  />
-                </div>
+            {/* Top Mission Health & Landing Predictor Status Summary Strip */}
+            {showStrip && (
+              <div className={`grid ${stripColsClass} gap-2 shrink-0`}>
+                {showMissionStrip && (
+                  <>
+                    {/* 1. Flight Phase */}
+                    <div className="ops-card px-3 py-2 flex items-center justify-between gap-2">
+                      <div className="min-w-0">
+                        <div className="text-[10px] font-semibold uppercase text-[var(--text-tertiary)] flex items-center gap-1">
+                          <Layers className="w-3 h-3 text-[var(--accent-cobalt)]" />
+                          Flight Phase (FSW)
+                        </div>
+                        <div className="font-mono-data text-xs sm:text-sm font-bold text-[var(--text-primary)] truncate mt-0.5">
+                          {activeLatestPacket?.fswStateName ?? 'STANDBY / NO DATA'}
+                        </div>
+                      </div>
+                      <span className="font-mono-data text-[10px] px-1.5 py-0.5 rounded-[var(--radius-xs)] bg-[var(--bg-surface-2)] text-[var(--text-secondary)] border border-[var(--border-subtle)] shrink-0">
+                        PKT #{activeLatestPacket?.packetNumber ?? '--'}
+                      </span>
+                    </div>
 
-                <div className="h-[42%] grid grid-cols-1 sm:grid-cols-2 gap-2.5 min-h-[210px]">
-                  <ThreeAttitudeViewport
-                    latestPacket={activeLatestPacket}
-                    telemetrySource={telemetrySource}
-                    isStale={isLiveStale}
-                  />
-                  <GpsTrackingMap
-                    latestPacket={activeLatestPacket}
-                    historyPackets={activeHistoryPackets}
-                    telemetrySource={telemetrySource}
-                    isStale={isLiveStale}
-                    onOpenLandingPredictor={() =>
-                      setActiveTab('LANDING_PREDICTOR')
-                    }
-                  />
-                </div>
+                    {/* 2. Altitude & Vertical Rate */}
+                    <div className="ops-card px-3 py-2 flex items-center justify-between gap-2">
+                      <div>
+                        <div className="text-[10px] font-semibold uppercase text-[var(--text-tertiary)] flex items-center gap-1">
+                          <Activity className="w-3 h-3 text-[var(--accent-teal)]" />
+                          Baro Alt / Rate
+                        </div>
+                        <div className="font-mono-data text-xs sm:text-sm font-bold text-[var(--text-primary)] mt-0.5 tabular-nums">
+                          {typeof activeLatestPacket?.altitude === 'number'
+                            ? `${activeLatestPacket.altitude.toFixed(1)} m`
+                            : 'UNAVAILABLE'}
+                        </div>
+                      </div>
+                      <div className="text-right font-mono-data text-[11px] text-[var(--accent-teal)] font-semibold tabular-nums">
+                        {typeof activeLatestPacket?.velocity === 'number'
+                          ? `${activeLatestPacket.velocity.toFixed(1)} m/s`
+                          : '--'}
+                      </div>
+                    </div>
+
+                    {/* 3. GNSS Lock & Time */}
+                    <div className="ops-card px-3 py-2 flex items-center justify-between gap-2">
+                      <div>
+                        <div className="text-[10px] font-semibold uppercase text-[var(--text-tertiary)] flex items-center gap-1">
+                          <Satellite className="w-3 h-3 text-[var(--accent-cobalt)]" />
+                          GNSS Fix &amp; Sats
+                        </div>
+                        <div className="font-mono-data text-xs sm:text-sm font-bold text-[var(--text-primary)] mt-0.5">
+                          {activeLatestPacket?.gpsValid
+                            ? `${activeLatestPacket.gpsFixType} (${
+                                activeLatestPacket.gpsSats ?? 0
+                              } SATS)`
+                            : 'NO VALID FIX'}
+                        </div>
+                      </div>
+                      <div className="text-right font-mono-data text-[10px] text-[var(--text-secondary)] tabular-nums">
+                        <div>UTC {activeLatestPacket?.timestampUtc ?? '--:--:--'}</div>
+                        <div className="text-[var(--accent-cobalt)] font-semibold">
+                          IST {activeLatestPacket?.gnssTimeIst ?? '--:--:--'}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* 4. Electrical Power & Link Health */}
+                    <div className="ops-card px-3 py-2 flex items-center justify-between gap-2">
+                      <div>
+                        <div className="text-[10px] font-semibold uppercase text-[var(--text-tertiary)] flex items-center gap-1">
+                          <Battery className="w-3 h-3 text-[var(--status-nominal)]" />
+                          2S Battery Pack
+                        </div>
+                        <div className="font-mono-data text-xs sm:text-sm font-bold text-[var(--status-nominal)] mt-0.5 tabular-nums">
+                          {typeof activeLatestPacket?.batteryVoltage === 'number'
+                            ? `${activeLatestPacket.batteryVoltage.toFixed(2)} V`
+                            : 'UNAVAILABLE'}
+                        </div>
+                      </div>
+                      <span
+                        className={`font-mono-data text-[10px] px-1.5 py-0.5 rounded-[var(--radius-xs)] border font-semibold ${
+                          telemetrySource === 'SIMULATION'
+                            ? 'bg-[var(--status-info-bg)] text-[var(--accent-cobalt)] border-[var(--accent-cobalt)]/25'
+                            : isLiveStale
+                            ? 'bg-[var(--status-warning-bg)] text-[var(--status-warning)] border-[var(--status-warning)]/40'
+                            : 'bg-[var(--status-nominal-bg)] text-[var(--status-nominal)] border-[var(--status-nominal)]/30'
+                        }`}
+                      >
+                        {telemetrySource === 'SIMULATION'
+                          ? 'SIM 10Hz'
+                          : isLiveStale
+                          ? 'STALE'
+                          : 'LIVE RX'}
+                      </span>
+                    </div>
+                  </>
+                )}
+
+                {/* 5. Landing Predictor Summary Card with Quick Action */}
+                {showPrediction && (
+                  <div
+                    className={`${
+                      showMissionStrip
+                        ? 'col-span-2 sm:col-span-1 lg:col-span-1'
+                        : 'col-span-1'
+                    } ops-card px-3 py-1.5 flex items-center justify-between gap-2 bg-[var(--bg-surface-2)]/60 min-w-0 min-h-0`}
+                  >
+                    <div className="min-w-0">
+                      <div className="text-[10px] font-semibold uppercase text-[var(--text-tertiary)] flex items-center gap-1">
+                        <Crosshair className="w-3 h-3 text-[var(--accent-teal)]" />
+                        Landing Predictor
+                      </div>
+                      {overviewPrediction.valid && overviewPrediction.prediction ? (
+                        <div className="flex flex-col mt-0.5">
+                          <div className="font-mono-data text-[11px] font-bold text-[var(--accent-teal)] truncate tabular-nums">
+                            {overviewPrediction.prediction.predicted_lat_deg.toFixed(4)}°N,{' '}
+                            {overviewPrediction.prediction.predicted_lon_deg.toFixed(4)}°E (T-
+                            {overviewPrediction.prediction.estimated_time_to_landing_s.toFixed(0)}
+                            s)
+                          </div>
+                          {typeof overviewPrediction.prediction.distance_to_target_m === 'number' && (
+                            <div className="font-mono-data text-[10px] text-[var(--text-secondary)] truncate tabular-nums">
+                              Target Miss: {overviewPrediction.prediction.distance_to_target_m.toFixed(1)}m
+                              {typeof overviewPrediction.prediction.bearing_to_target_deg === 'number'
+                                ? ` @ ${overviewPrediction.prediction.bearing_to_target_deg.toFixed(0)}°`
+                                : ''}
+                            </div>
+                          )}
+                        </div>
+                      ) : (
+                        <div className="font-mono-data text-[11px] font-semibold text-[var(--status-warning)] truncate mt-0.5 flex items-center gap-1">
+                          <ShieldAlert className="w-3 h-3 shrink-0" />
+                          <span>GATED: {overviewPrediction.reason_code}</span>
+                        </div>
+                      )}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setActiveTab('LANDING_PREDICTOR')}
+                      title="Open Dedicated Landing Predictor Workspace"
+                      className="px-2 py-1 bg-[var(--accent-teal)] hover:opacity-95 text-white rounded-[var(--radius-xs)] text-[10px] font-semibold cursor-pointer flex items-center gap-1 shrink-0 transition-opacity"
+                    >
+                      {overviewPrediction.valid ? (
+                        <CheckCircle2 className="w-3 h-3" />
+                      ) : (
+                        <ExternalLink className="w-3 h-3" />
+                      )}
+                      <span>Open</span>
+                    </button>
+                  </div>
+                )}
               </div>
+            )}
 
-              {/* Right Sidebar Column */}
-              <div className="w-full lg:w-80 xl:w-84 flex flex-col gap-2.5 overflow-y-auto h-full pr-0.5">
-                <SerialLinkPanel
-                  telemetrySource={telemetrySource}
-                  onSelectSource={handleSelectSource}
-                  config={serialConfig}
-                  onUpdateConfig={(cfg) =>
-                    setSerialConfig((prev) => ({ ...prev, ...cfg }))
-                  }
-                  onToggleConnect={handleToggleSimConnect}
-                  serialState={serialState}
-                  serialMetrics={serialMetrics}
-                  liveBaudRate={liveBaudRate}
-                  onChangeLiveBaudRate={setLiveBaudRate}
-                  onConnectLiveSerial={handleConnectLiveSerial}
-                  onDisconnectLiveSerial={handleDisconnectLiveSerial}
-                  isStale={isLiveStale}
-                  packetAgeSeconds={packetAgeSeconds}
-                />
-
-                <MissionControlPanel
-                  telemetrySource={telemetrySource}
-                  isRunning={isRunning}
-                  onTogglePlay={handleTogglePlay}
-                  onCalibrateSensors={handleCalibrateSensors}
-                  onInjectDisturbance={handleInjectTurbulence}
-                  onResetSimulation={handleResetSimulation}
-                />
-
-                <FlightStatePanel
-                  latestPacket={activeLatestPacket}
-                  telemetrySource={telemetrySource}
-                  isStale={isLiveStale}
-                  onOverrideState={handleOverrideState}
-                />
-
-                <RawReadoutsPanel
-                  latestPacket={activeLatestPacket}
-                  historyPackets={activeHistoryPackets}
-                  telemetrySource={telemetrySource}
-                  isStale={isLiveStale}
-                />
+            {!anyOverviewWidget && (
+              <div className="ops-card flex-1 flex flex-col items-center justify-center gap-2 p-8 text-center">
+                <span className="text-sm font-bold text-[var(--text-primary)]">
+                  All Overview widgets are hidden
+                </span>
+                <span className="text-xs text-[var(--text-secondary)]">
+                  This is a local display preference for this browser only.
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setIsSettingsModalOpen(true)}
+                  className="px-3 py-1.5 bg-[var(--accent-cobalt)] text-white text-xs font-semibold rounded-[var(--radius-sm)] cursor-pointer"
+                >
+                  Open Display Settings
+                </button>
               </div>
-            </div>
+            )}
+
+            {/* Main Overview Body: Primary Tactical Map + Secondary Spatial/Trends & Right Rail */}
+            {(showLeftColumn || showRightRail) && (
+              <div className="flex-1 flex flex-col lg:flex-row gap-2.5 lg:overflow-hidden min-h-0 min-w-0">
+                {/* Left & Center Main Column */}
+                {showLeftColumn && (
+                  <div className="w-full lg:flex-1 min-w-0 flex flex-col gap-2.5 lg:overflow-hidden min-h-[460px] lg:min-h-0 lg:h-full">
+                    {/* Primary Operational Area: GPS Tracking Map with Live Prediction & Target Vector */}
+                    {showMap && (
+                      <div
+                        className={
+                          showSecondaryRow
+                            ? 'flex-[1.25] min-h-[220px] min-w-0 overflow-hidden'
+                            : 'flex-1 min-h-[300px] min-w-0 overflow-hidden'
+                        }
+                      >
+                        <GpsTrackingMap
+                          latestPacket={activeLatestPacket}
+                          historyPackets={activeHistoryPackets}
+                          telemetrySource={telemetrySource}
+                          isStale={isLiveStale}
+                          prediction={overviewPrediction}
+                          targetLat={predictorConfig.target_lat_deg}
+                          targetLon={predictorConfig.target_lon_deg}
+                          onUpdateTarget={handleUpdateSharedTarget}
+                          onOpenLandingPredictor={() =>
+                            setActiveTab('LANDING_PREDICTOR')
+                          }
+                        />
+                      </div>
+                    )}
+
+                    {/* Secondary Area: 3D Attitude Viewport & Telemetry Chart Trends */}
+                    {showSecondaryRow && (
+                      <div
+                        className={`${
+                          showMap
+                            ? 'flex-1 min-h-[190px]'
+                            : 'flex-1 min-h-[260px]'
+                        } grid grid-cols-1 ${
+                          showAttitude && showCharts ? 'md:grid-cols-2' : 'grid-cols-1'
+                        } gap-2.5 min-h-0 min-w-0 overflow-hidden`}
+                      >
+                        {showAttitude && (
+                          <div className="h-full min-h-0 min-w-0 overflow-hidden">
+                            <ThreeAttitudeViewport
+                              latestPacket={activeLatestPacket}
+                              telemetrySource={telemetrySource}
+                              isStale={isLiveStale}
+                            />
+                          </div>
+                        )}
+                        {showCharts && (
+                          <div className="h-full min-h-0 min-w-0 overflow-hidden">
+                            <TelemetryChartPanel
+                              history={activeHistoryPackets}
+                              latestPacket={activeLatestPacket}
+                              telemetrySource={telemetrySource}
+                              isStale={isLiveStale}
+                              overviewMode={true}
+                            />
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Right Operational Rail: Flight State, Raw Sensors, RF Link, and Simulator Controls */}
+                {showRightRail && (
+                  <div
+                    className={`w-full ${
+                      showLeftColumn ? 'lg:w-[320px] xl:w-[360px]' : 'lg:max-w-xl mx-auto'
+                    } shrink-0 flex flex-col gap-2.5 lg:overflow-y-auto lg:h-full pr-1 pb-2 lg:pb-0 min-h-0 min-w-0`}
+                  >
+                    {/* 1. Secondary: Flight Phase & State Machine Progression */}
+                    {showFlightState && (
+                      <FlightStatePanel
+                        latestPacket={activeLatestPacket}
+                        telemetrySource={telemetrySource}
+                        isStale={isLiveStale}
+                        onOverrideState={handleOverrideState}
+                      />
+                    )}
+
+                    {/* 2. Secondary: Raw Sensor Readouts & Electrical Metrics */}
+                    {showRawReadouts && (
+                      <RawReadoutsPanel
+                        latestPacket={activeLatestPacket}
+                        historyPackets={activeHistoryPackets}
+                        telemetrySource={telemetrySource}
+                        isStale={isLiveStale}
+                      />
+                    )}
+
+                    {/* 3. Supporting: Communications Link Metrics & Freshness */}
+                    {showLink && (
+                      <SerialLinkPanel
+                        telemetrySource={telemetrySource}
+                        onSelectSource={handleSelectSource}
+                        config={serialConfig}
+                        onUpdateConfig={(cfg) =>
+                          setSerialConfig((prev) => ({ ...prev, ...cfg }))
+                        }
+                        onToggleConnect={handleToggleSimConnect}
+                        serialState={serialState}
+                        serialMetrics={serialMetrics}
+                        liveBaudRate={liveBaudRate}
+                        onChangeLiveBaudRate={setLiveBaudRate}
+                        onConnectLiveSerial={handleConnectLiveSerial}
+                        onDisconnectLiveSerial={handleDisconnectLiveSerial}
+                        isStale={isLiveStale}
+                        packetAgeSeconds={packetAgeSeconds}
+                      />
+                    )}
+
+                    {/* 4. Supporting: Simulation Controls (Simulation Mode Only) */}
+                    {showSimControls && (
+                      <MissionControlPanel
+                        telemetrySource={telemetrySource}
+                        isRunning={isRunning}
+                        onTogglePlay={handleTogglePlay}
+                        onCalibrateSensors={handleCalibrateSensors}
+                        onInjectDisturbance={handleInjectTurbulence}
+                        onResetSimulation={handleResetSimulation}
+                      />
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         )}
 
@@ -664,13 +888,15 @@ export default function App() {
             telemetrySource={telemetrySource}
             isStale={isLiveStale}
             packetAgeSeconds={packetAgeSeconds}
+            config={predictorConfig}
+            onUpdateConfig={setPredictorConfig}
           />
         )}
 
         {/* WORKSPACE 3: TELEMETRY EXPLORER */}
         {activeTab === 'TELEMETRY' && (
-          <div className="h-full w-full p-0.5 bg-[var(--bg-base)] flex flex-col gap-2.5">
-            <div className="flex-1">
+          <div className="h-full w-full p-0.5 bg-[var(--bg-base)] flex flex-col gap-2.5 min-h-0 flex-1 overflow-hidden">
+            <div className="flex-1 min-h-0 flex flex-col h-full">
               <TelemetryChartPanel
                 history={activeHistoryPackets}
                 latestPacket={activeLatestPacket}
@@ -684,15 +910,26 @@ export default function App() {
 
         {/* WORKSPACE 4: ATTITUDE & SENSORS */}
         {activeTab === 'ATTITUDE_SENSORS' && (
-          <div className="h-full w-full p-0.5 bg-[var(--bg-base)] grid grid-cols-1 lg:grid-cols-3 gap-2.5 overflow-y-auto lg:overflow-hidden">
-            <div className="lg:col-span-2 h-full min-h-[380px]">
-              <ThreeAttitudeViewport
-                latestPacket={activeLatestPacket}
-                telemetrySource={telemetrySource}
-                isStale={isLiveStale}
-              />
+          <div className="h-full w-full p-0.5 bg-[var(--bg-base)] grid grid-cols-1 lg:grid-cols-3 gap-2.5 overflow-y-auto lg:overflow-hidden min-h-0 min-w-0 flex-1">
+            <div className="lg:col-span-2 h-full min-h-0 min-w-0 flex flex-col gap-2.5 lg:overflow-hidden">
+              <div className="flex-[1.1] min-h-[220px] min-w-0 overflow-hidden">
+                <ThreeAttitudeViewport
+                  latestPacket={activeLatestPacket}
+                  telemetrySource={telemetrySource}
+                  isStale={isLiveStale}
+                />
+              </div>
+              <div className="flex-1 min-h-[200px] min-w-0 overflow-hidden">
+                <TelemetryChartPanel
+                  history={activeHistoryPackets}
+                  latestPacket={activeLatestPacket}
+                  telemetrySource={telemetrySource}
+                  isStale={isLiveStale}
+                  initialPreset="BARO_IMU"
+                />
+              </div>
             </div>
-            <div className="flex flex-col gap-2.5 overflow-y-auto h-full pr-0.5">
+            <div className="flex flex-col gap-2.5 overflow-y-auto h-full pr-1 pb-2 lg:pb-0 shrink-0 min-h-0 min-w-0">
               <FlightStatePanel
                 latestPacket={activeLatestPacket}
                 telemetrySource={telemetrySource}
@@ -711,9 +948,9 @@ export default function App() {
 
         {/* WORKSPACE 5: COMMUNICATIONS & LOGS */}
         {activeTab === 'COMMS_LOGS' && (
-          <div className="h-full w-full p-0.5 bg-[var(--bg-base)] grid grid-cols-1 lg:grid-cols-12 gap-2.5 overflow-y-auto">
+          <div className="h-full w-full p-0.5 bg-[var(--bg-base)] grid grid-cols-1 lg:grid-cols-12 gap-2.5 overflow-y-auto min-h-0 min-w-0 flex-1">
             {/* Left Column: Serial Link, Controls & Pre-Flight Checklist (5 cols) */}
-            <div className="lg:col-span-5 flex flex-col gap-2.5">
+            <div className="lg:col-span-5 flex flex-col gap-2.5 min-h-0 min-w-0">
               <SerialLinkPanel
                 telemetrySource={telemetrySource}
                 onSelectSource={handleSelectSource}
@@ -742,10 +979,12 @@ export default function App() {
                   setActiveTab('OVERVIEW');
                 }}
               />
+
+              <RadioAssignmentPanel />
             </div>
 
             {/* Right Column: Live Frame Stream Inspector & Post-Flight Judge Report (7 cols) */}
-            <div className="lg:col-span-7 flex flex-col gap-2.5">
+            <div className="lg:col-span-7 flex flex-col gap-2.5 min-h-0 min-w-0">
               {/* Inline Recent Raw Frame Stream Inspector */}
               <div className="ops-card p-3.5 flex flex-col gap-2">
                 <div className="flex items-center justify-between border-b border-[var(--border-subtle)] pb-2">
@@ -760,8 +999,8 @@ export default function App() {
                         )
                       </h3>
                       <p className="text-[11px] text-[var(--text-secondary)]">
-                        Showing latest {Math.min(rawLogs.length, 12)} of{' '}
-                        {rawLogs.length} buffered frames • Receive-only hardware
+                        Showing latest {Math.min(activeSourceLogs.length, 12)} of{' '}
+                        {activeSourceLogs.length} source-isolated frames • Receive-only hardware
                         protection active
                       </p>
                     </div>
@@ -777,37 +1016,40 @@ export default function App() {
                 </div>
 
                 <div className="bg-[var(--bg-surface-2)] border border-[var(--border-subtle)] rounded-[var(--radius-sm)] p-2.5 h-40 overflow-y-auto font-mono-data text-[11px] space-y-1 select-text">
-                  {rawLogs.length === 0 ? (
+                  {activeSourceLogs.length === 0 ? (
                     <div className="h-full flex items-center justify-center text-[var(--text-tertiary)]">
-                      No telemetry frames logged yet.
+                      {telemetrySource === 'SIMULATION'
+                        ? 'No simulation frames logged yet.'
+                        : 'No live USB serial frames logged yet.'}
                     </div>
                   ) : (
-                    rawLogs.slice(-12).map((entry, idx) => (
-                      <div
-                        key={idx}
-                        className="flex items-baseline gap-2 border-b border-[var(--border-subtle)]/60 pb-0.5 last:border-b-0"
-                      >
-                        <span className="text-[10px] text-[var(--text-tertiary)] shrink-0 tabular-nums">
-                          [{entry.time}]
-                        </span>
-                        <span
-                          className={`text-[9px] font-bold uppercase px-1.5 py-0.2 rounded-[var(--radius-xs)] shrink-0 ${
-                            entry.type === 'err'
-                              ? 'bg-[var(--status-alert-bg)] text-[var(--status-alert)]'
-                              : entry.type === 'sys'
-                              ? 'bg-[var(--status-info-bg)] text-[var(--accent-cobalt)]'
-                              : 'bg-[var(--status-nominal-bg)] text-[var(--status-nominal)]'
-                          }`}
+                    activeSourceLogs.slice(-12).map((entry, idx) => {
+                      const badgeLabel = getLogBadgeLabel(entry, telemetrySource);
+                      return (
+                        <div
+                          key={idx}
+                          className="flex items-baseline gap-2 border-b border-[var(--border-subtle)]/60 pb-0.5 last:border-b-0"
                         >
-                          {entry.source === 'SIMULATION'
-                            ? `SIM-${entry.type.toUpperCase()}`
-                            : entry.type.toUpperCase()}
-                        </span>
-                        <span className="text-[var(--text-primary)] truncate">
-                          {entry.text}
-                        </span>
-                      </div>
-                    ))
+                          <span className="text-[10px] text-[var(--text-tertiary)] shrink-0 tabular-nums">
+                            [{entry.time}]
+                          </span>
+                          <span
+                            className={`text-[9px] font-bold uppercase px-1.5 py-0.2 rounded-[var(--radius-xs)] shrink-0 ${
+                              entry.type === 'err'
+                                ? 'bg-[var(--status-alert-bg)] text-[var(--status-alert)]'
+                                : entry.type === 'sys'
+                                ? 'bg-[var(--status-info-bg)] text-[var(--accent-cobalt)]'
+                                : 'bg-[var(--status-nominal-bg)] text-[var(--status-nominal)]'
+                            }`}
+                          >
+                            {badgeLabel}
+                          </span>
+                          <span className="text-[var(--text-primary)] truncate">
+                            {entry.text}
+                          </span>
+                        </div>
+                      );
+                    })
                   )}
                 </div>
               </div>
@@ -832,21 +1074,19 @@ export default function App() {
         rawLogEntries={rawLogs}
         historyPackets={activeHistoryPackets}
         onSendCommand={handleSendCommand}
-        onClearLogs={() => setRawLogs([])}
-      />
-
-      {/* Deploy Critical Safety Modal */}
-      <DeployConfirmationModal
-        isOpen={isDeployModalOpen}
-        telemetrySource={telemetrySource}
-        onClose={() => setIsDeployModalOpen(false)}
-        onConfirmDeploy={handleConfirmDeploy}
+        onClearLogs={() =>
+          setRawLogs((prev) =>
+            prev.filter((l) => (l.source ?? 'SIMULATION') !== telemetrySource)
+          )
+        }
       />
 
       {/* Ground Station Settings Modal */}
       <SettingsModal
         isOpen={isSettingsModalOpen}
         onClose={() => setIsSettingsModalOpen(false)}
+        overviewPrefs={overviewPrefs}
+        onUpdateOverviewPrefs={handleUpdateOverviewPrefs}
       />
     </div>
   );

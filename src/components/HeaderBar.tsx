@@ -33,7 +33,6 @@ interface HeaderBarProps {
   liveBaudRate: number;
   isStale: boolean;
   packetAgeSeconds: number | null;
-  onOpenDeployModal: () => void;
   onOpenSettingsModal: () => void;
   onToggleTerminal: () => void;
   isTerminalOpen: boolean;
@@ -73,6 +72,36 @@ function formatComputerIstClock(date: Date = new Date()): {
   };
 }
 
+export interface HeaderTeamBadge {
+  /** Production display label, e.g. `CAN-7USAT | TEAM 017`. */
+  label: string;
+  /** Provenance of the identity shown next to the label. */
+  status: 'SIMULATED' | 'AWAITING_RX' | 'VERIFIED' | 'MISMATCH';
+  /** Received identifier when it differs from the expected Team 017 identifier. */
+  mismatchedTeamId: string | null;
+}
+
+/**
+ * Team identity for the header. The assigned team is always 017. A received identifier is
+ * compared with the expected identifier and a mismatch is surfaced explicitly (never silently
+ * replaced). Simulated packets are labeled as simulated, never as live hardware identity.
+ */
+export function resolveHeaderTeamBadge(
+  latestPacket: TelemetryPacket | null,
+  telemetrySource: TelemetrySource
+): HeaderTeamBadge {
+  const received = latestPacket?.teamId?.trim() ?? '';
+  if (telemetrySource === 'SIMULATION') {
+    return { label: TEAM_INFO.displayLabel, status: 'SIMULATED', mismatchedTeamId: null };
+  }
+  if (!received) {
+    return { label: TEAM_INFO.displayLabel, status: 'AWAITING_RX', mismatchedTeamId: null };
+  }
+  if (received !== TEAM_INFO.id) {
+    return { label: TEAM_INFO.displayLabel, status: 'MISMATCH', mismatchedTeamId: received };
+  }
+  return { label: TEAM_INFO.displayLabel, status: 'VERIFIED', mismatchedTeamId: null };
+}
 export const HeaderBar: React.FC<HeaderBarProps> = ({
   activeTab,
   setActiveTab,
@@ -84,7 +113,6 @@ export const HeaderBar: React.FC<HeaderBarProps> = ({
   liveBaudRate,
   isStale,
   packetAgeSeconds,
-  onOpenDeployModal,
   onOpenSettingsModal,
   onToggleTerminal,
   isTerminalOpen,
@@ -105,6 +133,7 @@ export const HeaderBar: React.FC<HeaderBarProps> = ({
   }, []);
 
   const isSim = telemetrySource === 'SIMULATION';
+  const teamBadge = resolveHeaderTeamBadge(latestPacket, telemetrySource);
 
   const tabs: { id: ActiveTab; label: string; icon: React.ReactNode }[] = [
     {
@@ -145,21 +174,51 @@ export const HeaderBar: React.FC<HeaderBarProps> = ({
     Number.isFinite(latestPacket.batterySoc);
 
   return (
-    <header className="flex justify-between items-center px-4 h-15 w-full z-50 bg-[var(--bg-surface-1)] border-b border-[var(--border-subtle)] shadow-[var(--shadow-xs)] fixed top-0 left-0 right-0 select-none">
+    <header className="flex justify-between items-center px-4 h-14 w-full z-40 bg-[var(--bg-surface-1)] border-b border-[var(--border-subtle)] shadow-[var(--shadow-xs)] shrink-0 select-none">
       {/* Left: Mission Identity & Five-Workspace Navigation */}
-      <div className="flex items-center gap-4">
-        <div className="flex items-center gap-3">
+      <div className="flex items-center gap-3 xl:gap-4 min-w-0">
+        <div className="flex items-center gap-3 shrink-0">
           <div className="w-1.5 h-7 bg-[var(--accent-cobalt)] rounded-full hidden sm:block" />
           <div>
             <div className="flex items-center gap-2">
               <h1 className="text-sm font-bold text-[var(--text-primary)] tracking-tight">
                 CAN-7USAT Operations
               </h1>
-              <span className="bg-[var(--accent-cobalt-soft)] text-[var(--accent-cobalt)] border border-[var(--accent-cobalt)]/20 text-[11px] font-mono-data font-semibold px-1.5 py-0.5 rounded-[var(--radius-xs)]">
-                {latestPacket?.teamId?.endsWith('017') ? 'ID #017' : 'ID #332'}
+              <span
+                className="bg-[var(--accent-cobalt-soft)] text-[var(--accent-cobalt)] border border-[var(--accent-cobalt)]/20 text-[11px] font-mono-data font-semibold px-1.5 py-0.5 rounded-[var(--radius-xs)]"
+                data-testid="team-badge"
+              >
+                {teamBadge.label}
+              </span>
+              <span
+                className={`hidden sm:inline-block text-[9px] font-mono-data font-bold px-1.5 py-0.5 border rounded-[var(--radius-xs)] uppercase ${
+                  teamBadge.status === 'MISMATCH'
+                    ? 'bg-[var(--status-alert-bg)] text-[var(--status-alert)] border-[var(--status-alert)]/40'
+                    : teamBadge.status === 'VERIFIED'
+                    ? 'bg-[var(--status-nominal-bg)] text-[var(--status-nominal)] border-[var(--status-nominal)]/30'
+                    : teamBadge.status === 'SIMULATED'
+                    ? 'bg-[var(--status-info-bg)] text-[var(--accent-cobalt)] border-[var(--accent-cobalt)]/25'
+                    : 'bg-[var(--bg-surface-2)] text-[var(--text-tertiary)] border-[var(--border-subtle)]'
+                }`}
+                title={
+                  teamBadge.status === 'MISMATCH'
+                    ? `Received team identifier '${teamBadge.mismatchedTeamId}' does not match expected '${TEAM_INFO.id}'`
+                    : `Expected team identifier: ${TEAM_INFO.id}`
+                }
+              >
+                {teamBadge.status === 'MISMATCH'
+                  ? `ID MISMATCH: ${teamBadge.mismatchedTeamId}`
+                  : teamBadge.status === 'VERIFIED'
+                  ? 'ID VERIFIED'
+                  : teamBadge.status === 'SIMULATED'
+                  ? 'SIMULATED'
+                  : 'AWAITING RX'}
               </span>
             </div>
-            <div className="text-[11px] text-[var(--text-secondary)] hidden xl:block">
+            <div
+              className="text-[11px] text-[var(--text-secondary)] hidden 2xl:block max-w-[280px] truncate"
+              title={`${TEAM_INFO.name} • ${TEAM_INFO.institution}`}
+            >
               {TEAM_INFO.name} • {TEAM_INFO.institution}
             </div>
           </div>
@@ -168,7 +227,7 @@ export const HeaderBar: React.FC<HeaderBarProps> = ({
         {/* Five-Workspace Primary Navigation Bar */}
         <nav
           aria-label="Primary Mission Workspaces"
-          className="hidden lg:flex items-center gap-1 ml-2 bg-[var(--bg-surface-2)] p-1 rounded-[var(--radius-md)] border border-[var(--border-subtle)]"
+          className="hidden lg:flex items-center gap-1 ml-1 xl:ml-2 bg-[var(--bg-surface-2)] p-1 rounded-[var(--radius-md)] border border-[var(--border-subtle)] shrink-0"
         >
           {tabs.map((tab) => {
             const isActive = activeTab === tab.id;
@@ -177,7 +236,7 @@ export const HeaderBar: React.FC<HeaderBarProps> = ({
                 key={tab.id}
                 type="button"
                 onClick={() => setActiveTab(tab.id)}
-                className={`px-3 py-1.5 text-xs font-medium transition-all flex items-center gap-1.5 rounded-[var(--radius-sm)] cursor-pointer ${
+                className={`px-2 xl:px-3 py-1.5 text-xs font-medium transition-all flex items-center gap-1.5 rounded-[var(--radius-sm)] cursor-pointer whitespace-nowrap ${
                   isActive
                     ? 'bg-[var(--bg-surface-1)] text-[var(--accent-cobalt)] font-semibold shadow-[var(--shadow-xs)] border border-[var(--border-subtle)]'
                     : 'text-[var(--text-secondary)] border border-transparent hover:text-[var(--text-primary)] hover:bg-[var(--bg-surface-elevated)]'
@@ -327,40 +386,28 @@ export const HeaderBar: React.FC<HeaderBarProps> = ({
           {istClock.timeLabel}
         </div>
 
-        {/* Reset Simulation Button (Strictly Simulation Only) */}
-        <button
-          type="button"
-          onClick={onResetSimulation}
-          disabled={!isSim}
-          title={
-            isSim
-              ? 'Reset Telemetry Simulator to T=0.0s'
-              : 'Simulator Reset Disabled in Live USB Serial Mode'
-          }
-          className="p-1.5 text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-surface-2)] transition-colors cursor-pointer border border-[var(--border-subtle)] rounded-[var(--radius-sm)] disabled:opacity-40 disabled:cursor-not-allowed"
-        >
-          <RefreshCw className="w-4 h-4" />
-        </button>
+        {/* Simulation-only: reset simulator. Not rendered at all in Live Serial mode. */}
+        {isSim && (
+          <button
+            type="button"
+            onClick={onResetSimulation}
+            title="Reset Telemetry Simulator to T=0.0s"
+            className="p-1.5 text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-surface-2)] transition-colors cursor-pointer border border-[var(--border-subtle)] rounded-[var(--radius-sm)]"
+          >
+            <RefreshCw className="w-4 h-4" />
+          </button>
+        )}
 
-        {/* Telecommands / Receive-Only Hardware Lock Indicator */}
-        <button
-          type="button"
-          onClick={onOpenDeployModal}
-          title={
-            isSim
-              ? 'Open Simulated Disreef Override Interlock'
-              : 'Hardware Telecommands Unavailable (Live Serial is Strictly Receive-Only)'
-          }
-          className={`text-xs font-semibold px-3 py-1.5 transition-colors cursor-pointer flex items-center gap-1.5 rounded-[var(--radius-sm)] ${
-            isSim
-              ? 'bg-[var(--accent-cobalt)] hover:bg-[var(--accent-cobalt-hover)] text-white shadow-[var(--shadow-xs)]'
-              : 'bg-[var(--bg-surface-2)] text-[var(--text-secondary)] border border-[var(--border-subtle)] hover:text-[var(--text-primary)]'
-          }`}
-        >
-          <Rocket className="w-3.5 h-3.5" />
-          <span>{isSim ? 'Sim Commands' : 'RX Only'}</span>
-        </button>
-
+        {/* Live Serial: static receive-only indicator (informational, not a control) */}
+        {!isSim && (
+          <span
+            className="hidden sm:flex items-center gap-1.5 text-[11px] font-semibold px-2.5 py-1 bg-[var(--bg-surface-2)] text-[var(--text-secondary)] border border-[var(--border-subtle)] rounded-[var(--radius-sm)]"
+            title="Live Serial is strictly receive-only: no hardware telecommands are sent"
+          >
+            <Rocket className="w-3.5 h-3.5" />
+            RX ONLY
+          </span>
+        )}
         {/* Raw Frame Drawer Toggle */}
         <button
           type="button"

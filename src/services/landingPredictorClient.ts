@@ -8,7 +8,7 @@
  *    No separate wind vector is ever added, preventing the double-counting defect in Notebook Cell 15.
  * 3. Configurable Altitude & Mission Profile Assumptions:
  *    - Barometric altitude reference (`altitude_source`, `baro_ground_offset_m`, `ground_elevation_amsl_m`)
- *      and two-stage descent parameters (`propagation_mode`, `disreef_transition_altitude_m`,
+ *      and two-stage descent parameters (`propagation_mode`, `parafoil_transition_altitude_m`,
  *      `stage1_nominal_descent_rate_ms`, `stage2_nominal_descent_rate_ms`) are explicit and configurable.
  * 4. Input/Trajectory Stability Diagnostic:
  *    - Never labeled as a calibrated landing-accuracy probability (`is_calibrated_probability: false`).
@@ -57,7 +57,7 @@ export interface PredictorConfigPayload {
   ground_elevation_amsl_m: number;
   altitude_reference_verified: boolean;
   propagation_mode: DescentPropagationMode;
-  disreef_transition_altitude_m: number;
+  parafoil_transition_altitude_m: number;
   stage1_nominal_descent_rate_ms: number;
   stage2_nominal_descent_rate_ms: number;
   mission_profile_verified: boolean;
@@ -85,7 +85,7 @@ export const DEFAULT_PREDICTOR_CONFIG: PredictorConfigPayload = {
   ground_elevation_amsl_m: 55.0,
   altitude_reference_verified: false,
   propagation_mode: 'OBSERVED_RATE',
-  disreef_transition_altitude_m: 600.0,
+  parafoil_transition_altitude_m: 600.0,
   stage1_nominal_descent_rate_ms: 17.0,
   stage2_nominal_descent_rate_ms: 2.2,
   mission_profile_verified: false,
@@ -254,6 +254,63 @@ export function isValidCoordinateFix(
   if (Math.abs(latDeg) > 90.0 || Math.abs(lonDeg) > 180.0) return false;
   if (Math.abs(latDeg) < 1e-5 && Math.abs(lonDeg) < 1e-5) return false;
   return true;
+}
+
+export interface TargetCoordinateValidationResult {
+  valid: boolean;
+  latDeg: number;
+  lonDeg: number;
+  error: string | null;
+}
+
+export function parseAndValidateTargetCoordinates(
+  latInput: string,
+  lonInput: string
+): TargetCoordinateValidationResult {
+  const latDeg = Number.parseFloat(latInput.trim());
+  const lonDeg = Number.parseFloat(lonInput.trim());
+
+  if (!Number.isFinite(latDeg) || !Number.isFinite(lonDeg)) {
+    return {
+      valid: false,
+      latDeg: 0,
+      lonDeg: 0,
+      error: 'Enter valid numeric latitude (-90..90) and longitude (-180..180).',
+    };
+  }
+  if (latDeg < -90.0 || latDeg > 90.0 || lonDeg < -180.0 || lonDeg > 180.0) {
+    return {
+      valid: false,
+      latDeg: 0,
+      lonDeg: 0,
+      error: 'Coordinates out of range: latitude [-90, 90], longitude [-180, 180].',
+    };
+  }
+  if (Math.abs(latDeg) < 1e-5 && Math.abs(lonDeg) < 1e-5) {
+    return {
+      valid: false,
+      latDeg: 0,
+      lonDeg: 0,
+      error: 'Invalid (0.0000, 0.0000) Null Island coordinate rejected.',
+    };
+  }
+  return { valid: true, latDeg, lonDeg, error: null };
+}
+
+export function shouldDisplayPredictedOverlay(
+  prediction: PredictionResponsePayload | null | undefined,
+  isStale: boolean,
+  canSatLat: number | null,
+  canSatLon: number | null
+): boolean {
+  if (isStale) return false;
+  if (canSatLat === null || canSatLon === null) return false;
+  if (!prediction || !prediction.valid || !prediction.prediction) return false;
+  return isValidCoordinateFix(
+    prediction.prediction.predicted_lat_deg,
+    prediction.prediction.predicted_lon_deg,
+    true
+  );
 }
 
 interface LinearFitResult {
@@ -488,7 +545,7 @@ export function computeLocalPhysicsPrediction(
     altitude_reference_verified_against_firmware:
       config.altitude_reference_verified,
     propagation_mode: config.propagation_mode,
-    disreef_transition_altitude_m: config.disreef_transition_altitude_m,
+    parafoil_transition_altitude_m: config.parafoil_transition_altitude_m,
     stage1_nominal_descent_rate_ms: config.stage1_nominal_descent_rate_ms,
     stage2_nominal_descent_rate_ms: config.stage2_nominal_descent_rate_ms,
     mission_profile_verified_against_official_spec:
@@ -792,10 +849,10 @@ export function computeLocalPhysicsPrediction(
 
   if (
     config.propagation_mode === 'TWO_STAGE_CONFIGURABLE' &&
-    remainingAltM > config.disreef_transition_altitude_m
+    remainingAltM > config.parafoil_transition_altitude_m
   ) {
-    const altStage1 = remainingAltM - config.disreef_transition_altitude_m;
-    const altStage2 = config.disreef_transition_altitude_m;
+    const altStage1 = remainingAltM - config.parafoil_transition_altitude_m;
+    const altStage2 = config.parafoil_transition_altitude_m;
     const vStage1 = Math.max(descentRateMs, config.min_descent_rate_ms);
     const vStage2 = Math.max(
       config.stage2_nominal_descent_rate_ms,
@@ -804,7 +861,7 @@ export function computeLocalPhysicsPrediction(
     stage1TimeS = Number((altStage1 / vStage1).toFixed(4));
     stage2TimeS = Number((altStage2 / vStage2).toFixed(4));
     tRemS = altStage1 / vStage1 + altStage2 / vStage2;
-    propModeUsed = `TWO_STAGE_CONFIGURABLE(h_dr=${config.disreef_transition_altitude_m.toFixed(0)}m,v2=${vStage2.toFixed(2)}m/s)`;
+    propModeUsed = `TWO_STAGE_CONFIGURABLE(h_tr=${config.parafoil_transition_altitude_m.toFixed(0)}m,v2=${vStage2.toFixed(2)}m/s)`;
   } else if (config.propagation_mode === 'TWO_STAGE_CONFIGURABLE') {
     stage1TimeS = 0.0;
     stage2TimeS = Number(tRemS.toFixed(4));
@@ -937,13 +994,20 @@ export type PredictorBackendConnection =
   | 'PYTHON_HTTP_ONLINE'
   | 'LOCAL_FALLBACK_ACTIVE';
 
+export interface EvaluateBackendOptions {
+  signal?: AbortSignal;
+  fetchImpl?: typeof fetch;
+  timeoutMs?: number;
+}
+
 export async function evaluateLandingPredictionWithBackend(
   historyPackets: TelemetryPacket[],
   config: PredictorConfigPayload,
   telemetrySource: TelemetrySource,
   packetAgeSeconds: number | null,
   isStaleOverride = false,
-  endpointBaseUrl = 'http://127.0.0.1:8001'
+  endpointBaseUrl = 'http://127.0.0.1:8001',
+  options?: EvaluateBackendOptions
 ): Promise<{
   response: PredictionResponsePayload;
   backendStatus: PredictorBackendConnection;
@@ -967,10 +1031,17 @@ export async function evaluateLandingPredictionWithBackend(
     source: sourceLabel,
   }));
 
-  const latestTs =
+  let latestTs =
     pointsPayload.length > 0
       ? pointsPayload[pointsPayload.length - 1].timestamp_s
       : 0.0;
+  for (let i = pointsPayload.length - 1; i >= 0; i -= 1) {
+    if (pointsPayload[i].gps_valid) {
+      latestTs = pointsPayload[i].timestamp_s;
+      break;
+    }
+  }
+
   const rawAgeS =
     packetAgeSeconds !== null && Number.isFinite(packetAgeSeconds)
       ? Math.max(0.0, packetAgeSeconds)
@@ -980,31 +1051,48 @@ export async function evaluateLandingPredictionWithBackend(
     : rawAgeS;
   const evaluationTimeS = latestTs + effectiveAgeS;
 
+  const fetchFn = options?.fetchImpl ?? globalThis.fetch;
+  const timeoutMs = options?.timeoutMs ?? 500;
   const controller = new AbortController();
-  const timeoutId = globalThis.setTimeout(() => controller.abort(), 500);
+  const externalSignal = options?.signal;
+  const onExternalAbort = () => controller.abort();
+  if (externalSignal) {
+    if (externalSignal.aborted) {
+      controller.abort();
+    } else {
+      externalSignal.addEventListener('abort', onExternalAbort, { once: true });
+    }
+  }
+  const timeoutId = globalThis.setTimeout(() => controller.abort(), timeoutMs);
 
   try {
-    const res = await fetch(`${endpointBaseUrl}/api/predictor/predict`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        points: pointsPayload,
-        evaluation_time_s: evaluationTimeS,
-        config,
-      }),
-      signal: controller.signal,
-    });
-    globalThis.clearTimeout(timeoutId);
+    if (typeof fetchFn === 'function' && !controller.signal.aborted) {
+      const res = await fetchFn(`${endpointBaseUrl}/api/predictor/predict`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          points: pointsPayload,
+          evaluation_time_s: evaluationTimeS,
+          config,
+        }),
+        signal: controller.signal,
+      });
 
-    if (res.ok) {
-      const json = (await res.json()) as PredictionResponsePayload;
-      return {
-        response: json,
-        backendStatus: 'PYTHON_HTTP_ONLINE',
-      };
+      if (res.ok) {
+        const json = (await res.json()) as PredictionResponsePayload;
+        return {
+          response: json,
+          backendStatus: 'PYTHON_HTTP_ONLINE',
+        };
+      }
     }
   } catch {
+    // Expected when predictor service is offline or request is aborted; fall back to local physics
+  } finally {
     globalThis.clearTimeout(timeoutId);
+    if (externalSignal) {
+      externalSignal.removeEventListener('abort', onExternalAbort);
+    }
   }
 
   return {
@@ -1018,3 +1106,234 @@ export async function evaluateLandingPredictionWithBackend(
     backendStatus: 'LOCAL_FALLBACK_ACTIVE',
   };
 }
+
+export interface PredictorCoordinatorOptions {
+  minPollIntervalMs?: number;
+  initialBackoffMs?: number;
+  maxBackoffMs?: number;
+  requestTimeoutMs?: number;
+  endpointBaseUrl?: string;
+  fetchImpl?: typeof fetch;
+  nowMs?: () => number;
+}
+
+export interface PredictorEvaluateParams {
+  historyPackets: TelemetryPacket[];
+  config: PredictorConfigPayload;
+  telemetrySource: TelemetrySource;
+  packetAgeSeconds: number | null;
+  isStaleOverride?: boolean;
+  forceNetwork?: boolean;
+}
+
+export interface CoordinatedPredictionResult {
+  response: PredictionResponsePayload;
+  backendStatus: PredictorBackendConnection;
+  requestId: number;
+  stale: boolean;
+  skippedNetwork: boolean;
+  consecutiveFailures: number;
+  nextRetryInMs: number;
+}
+
+/**
+ * Coordinates HTTP requests to the optional Python predictor service (`127.0.0.1:8001`).
+ * - Bounds online polling rate to `minPollIntervalMs` (default 1000 ms).
+ * - Applies exponential backoff (`initialBackoffMs` -> `maxBackoffMs`) when the service is unreachable
+ *   so the browser never floods the console/network with `ERR_CONNECTION_REFUSED`.
+ * - Cancels obsolete in-flight requests on telemetry source changes or explicit cancellation.
+ * - Guards against request races so a late HTTP response cannot overwrite a newer prediction.
+ */
+export class PredictorRequestCoordinator {
+  private readonly minPollIntervalMs: number;
+  private readonly initialBackoffMs: number;
+  private readonly maxBackoffMs: number;
+  private readonly requestTimeoutMs: number;
+  private readonly endpointBaseUrl: string;
+  private readonly fetchImpl?: typeof fetch;
+  private readonly nowMs: () => number;
+
+  private latestRequestId = 0;
+  private activeSource: TelemetrySource | null = null;
+  private inFlightController: AbortController | null = null;
+  private lastBackendStatus: PredictorBackendConnection = 'LOCAL_FALLBACK_ACTIVE';
+  private consecutiveFailures = 0;
+  private nextAllowedNetworkAttemptMs = 0;
+
+  constructor(options?: PredictorCoordinatorOptions) {
+    this.minPollIntervalMs = options?.minPollIntervalMs ?? 1000;
+    this.initialBackoffMs = options?.initialBackoffMs ?? 3000;
+    this.maxBackoffMs = options?.maxBackoffMs ?? 15000;
+    this.requestTimeoutMs = options?.requestTimeoutMs ?? 500;
+    this.endpointBaseUrl = options?.endpointBaseUrl ?? 'http://127.0.0.1:8001';
+    this.fetchImpl = options?.fetchImpl;
+    this.nowMs = options?.nowMs ?? (() => Date.now());
+  }
+
+  public cancelPending(): void {
+    this.latestRequestId += 1;
+    if (this.inFlightController) {
+      this.inFlightController.abort();
+      this.inFlightController = null;
+    }
+  }
+
+  public resetBackoff(): void {
+    this.consecutiveFailures = 0;
+    this.nextAllowedNetworkAttemptMs = 0;
+  }
+
+  public getState(): {
+    latestRequestId: number;
+    lastBackendStatus: PredictorBackendConnection;
+    consecutiveFailures: number;
+    nextAllowedNetworkAttemptMs: number;
+    hasInFlightRequest: boolean;
+  } {
+    return {
+      latestRequestId: this.latestRequestId,
+      lastBackendStatus: this.lastBackendStatus,
+      consecutiveFailures: this.consecutiveFailures,
+      nextAllowedNetworkAttemptMs: this.nextAllowedNetworkAttemptMs,
+      hasInFlightRequest: this.inFlightController !== null,
+    };
+  }
+
+  public async evaluate(
+    params: PredictorEvaluateParams
+  ): Promise<CoordinatedPredictionResult> {
+    const {
+      historyPackets,
+      config,
+      telemetrySource,
+      packetAgeSeconds,
+      isStaleOverride = false,
+      forceNetwork = false,
+    } = params;
+
+    if (this.activeSource !== null && this.activeSource !== telemetrySource) {
+      this.cancelPending();
+    }
+    this.activeSource = telemetrySource;
+
+    if (forceNetwork && this.inFlightController) {
+      this.inFlightController.abort();
+      this.inFlightController = null;
+    }
+
+    this.latestRequestId += 1;
+    const requestId = this.latestRequestId;
+    const requestSource = telemetrySource;
+
+    const localResponse = computeLocalPhysicsPrediction(
+      historyPackets,
+      config,
+      telemetrySource,
+      packetAgeSeconds,
+      isStaleOverride
+    );
+
+    const now = this.nowMs();
+
+    if (historyPackets.length === 0) {
+      return {
+        response: localResponse,
+        backendStatus: this.lastBackendStatus,
+        requestId,
+        stale: false,
+        skippedNetwork: true,
+        consecutiveFailures: this.consecutiveFailures,
+        nextRetryInMs: Math.max(0, this.nextAllowedNetworkAttemptMs - now),
+      };
+    }
+
+    const canAttemptNetwork =
+      forceNetwork ||
+      (this.inFlightController === null && now >= this.nextAllowedNetworkAttemptMs);
+
+    if (!canAttemptNetwork) {
+      return {
+        response: localResponse,
+        backendStatus: this.lastBackendStatus,
+        requestId,
+        stale: false,
+        skippedNetwork: true,
+        consecutiveFailures: this.consecutiveFailures,
+        nextRetryInMs: Math.max(0, this.nextAllowedNetworkAttemptMs - now),
+      };
+    }
+
+    const controller = new AbortController();
+    this.inFlightController = controller;
+    let abortedExternally = false;
+    const onAbort = () => {
+      abortedExternally = true;
+    };
+    controller.signal.addEventListener('abort', onAbort, { once: true });
+
+    // Reserve throttle window immediately so burst packets don't spawn duplicate fetches
+    this.nextAllowedNetworkAttemptMs = now + this.minPollIntervalMs;
+
+    try {
+      const result = await evaluateLandingPredictionWithBackend(
+        historyPackets,
+        config,
+        telemetrySource,
+        packetAgeSeconds,
+        isStaleOverride,
+        this.endpointBaseUrl,
+        {
+          signal: controller.signal,
+          fetchImpl: this.fetchImpl,
+          timeoutMs: this.requestTimeoutMs,
+        }
+      );
+
+      const finishedAt = this.nowMs();
+      const isSuperseded =
+        requestId !== this.latestRequestId || requestSource !== this.activeSource;
+
+      if (result.backendStatus === 'PYTHON_HTTP_ONLINE') {
+        this.consecutiveFailures = 0;
+        this.lastBackendStatus = 'PYTHON_HTTP_ONLINE';
+        this.nextAllowedNetworkAttemptMs = finishedAt + this.minPollIntervalMs;
+
+        return {
+          response: isSuperseded ? localResponse : result.response,
+          backendStatus: 'PYTHON_HTTP_ONLINE',
+          requestId,
+          stale: isSuperseded,
+          skippedNetwork: false,
+          consecutiveFailures: 0,
+          nextRetryInMs: 0,
+        };
+      }
+
+      if (!abortedExternally) {
+        this.consecutiveFailures += 1;
+        this.lastBackendStatus = 'LOCAL_FALLBACK_ACTIVE';
+        const backoffMs = Math.min(
+          this.maxBackoffMs,
+          this.initialBackoffMs * Math.pow(2, this.consecutiveFailures - 1)
+        );
+        this.nextAllowedNetworkAttemptMs = finishedAt + backoffMs;
+      }
+
+      return {
+        response: localResponse,
+        backendStatus: this.lastBackendStatus,
+        requestId,
+        stale: isSuperseded,
+        skippedNetwork: false,
+        consecutiveFailures: this.consecutiveFailures,
+        nextRetryInMs: Math.max(0, this.nextAllowedNetworkAttemptMs - finishedAt),
+      };
+    } finally {
+      controller.signal.removeEventListener('abort', onAbort);
+      if (this.inFlightController === controller) {
+        this.inFlightController = null;
+      }
+    }
+  }
+}
+

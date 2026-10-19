@@ -17,27 +17,47 @@ import {
 } from 'lucide-react';
 import { TelemetryPacket, TelemetrySource } from '../types';
 import { BASE_GPS } from '../constants';
+import {
+  PredictionResponsePayload,
+  isValidCoordinateFix,
+  parseAndValidateTargetCoordinates,
+} from '../services/landingPredictorClient';
 
 interface GpsTrackingMapProps {
   latestPacket: TelemetryPacket | null;
   historyPackets?: TelemetryPacket[];
   telemetrySource?: TelemetrySource;
   isStale?: boolean;
+  prediction?: PredictionResponsePayload | null;
+  targetLat?: number | null;
+  targetLon?: number | null;
+  onUpdateTarget?: (lat: number | null, lon: number | null) => void;
   onOpenLandingPredictor?: () => void;
 }
 
-function isPacketGpsValid(
+export function isPacketGpsValid(
   p: TelemetryPacket | null | undefined
 ): p is TelemetryPacket & { latitude: number; longitude: number } {
   if (!p) return false;
   if (p.gpsValid === false || p.gpsFixType === 'NO_FIX') return false;
   if (typeof p.gpsSats === 'number' && p.gpsSats <= 0) return false;
-  if (typeof p.latitude !== 'number' || typeof p.longitude !== 'number') return false;
-  if (!Number.isFinite(p.latitude) || !Number.isFinite(p.longitude)) return false;
-  if (p.latitude < -90 || p.latitude > 90 || p.longitude < -180 || p.longitude > 180)
-    return false;
-  if (Math.abs(p.latitude) < 1e-5 && Math.abs(p.longitude) < 1e-5) return false;
-  return true;
+  return isValidCoordinateFix(p.latitude, p.longitude, true);
+}
+
+export function shouldDisplayPredictedOverlay(
+  prediction: PredictionResponsePayload | null | undefined,
+  isStale: boolean,
+  canSatLat: number | null,
+  canSatLon: number | null
+): boolean {
+  if (isStale) return false;
+  if (canSatLat === null || canSatLon === null) return false;
+  if (!prediction || !prediction.valid || !prediction.prediction) return false;
+  return isValidCoordinateFix(
+    prediction.prediction.predicted_lat_deg,
+    prediction.prediction.predicted_lon_deg,
+    true
+  );
 }
 
 export const GpsTrackingMap: React.FC<GpsTrackingMapProps> = ({
@@ -45,6 +65,10 @@ export const GpsTrackingMap: React.FC<GpsTrackingMapProps> = ({
   historyPackets = [],
   telemetrySource = 'SIMULATION',
   isStale = false,
+  prediction = null,
+  targetLat: externalTargetLat,
+  targetLon: externalTargetLon,
+  onUpdateTarget,
   onOpenLandingPredictor,
 }) => {
   const mapContainerRef = useRef<HTMLDivElement>(null);
@@ -55,16 +79,35 @@ export const GpsTrackingMap: React.FC<GpsTrackingMapProps> = ({
   const gsMarkerRef = useRef<L.Marker | null>(null);
   const polylineRef = useRef<L.Polyline | null>(null);
   const targetVectorRef = useRef<L.Polyline | null>(null);
+  const predictedMarkerRef = useRef<L.Marker | null>(null);
+  const predictedDriftLineRef = useRef<L.Polyline | null>(null);
 
   const [followVehicle, setFollowVehicle] = useState<boolean>(true);
   const [mapType, setMapType] = useState<'osm' | 'satellite' | 'dark'>('osm');
   const [showTargetModal, setShowTargetModal] = useState<boolean>(false);
   const [geoError, setGeoError] = useState<string | null>(null);
 
-  const [targetLat, setTargetLat] = useState<number | null>(null);
-  const [targetLon, setTargetLon] = useState<number | null>(null);
+  const [internalTargetLat, setInternalTargetLat] = useState<number | null>(null);
+  const [internalTargetLon, setInternalTargetLon] = useState<number | null>(null);
   const [inputTargetLat, setInputTargetLat] = useState<string>('');
   const [inputTargetLon, setInputTargetLon] = useState<string>('');
+
+  const targetLat =
+    externalTargetLat !== undefined ? externalTargetLat : internalTargetLat;
+  const targetLon =
+    externalTargetLon !== undefined ? externalTargetLon : internalTargetLon;
+
+  const updateTargetCoordinates = (lat: number | null, lon: number | null) => {
+    if (onUpdateTarget) {
+      onUpdateTarget(lat, lon);
+    } else {
+      setInternalTargetLat(lat);
+      setInternalTargetLon(lon);
+    }
+  };
+
+  const updateTargetRef = useRef(updateTargetCoordinates);
+  updateTargetRef.current = updateTargetCoordinates;
 
   const isSim = telemetrySource === 'SIMULATION';
 
@@ -210,11 +253,16 @@ export const GpsTrackingMap: React.FC<GpsTrackingMapProps> = ({
     L.control.scale({ position: 'bottomleft', imperial: false }).addTo(map);
 
     map.on('click', (e: L.LeafletMouseEvent) => {
-      const { lat, lng } = e.latlng;
-      setTargetLat(Number(lat.toFixed(6)));
-      setTargetLon(Number(lng.toFixed(6)));
-      setInputTargetLat(lat.toFixed(6));
-      setInputTargetLon(lng.toFixed(6));
+      const clickedLat = Number(e.latlng.lat.toFixed(6));
+      const clickedLon = Number(e.latlng.lng.toFixed(6));
+      if (!isValidCoordinateFix(clickedLat, clickedLon, true)) {
+        setGeoError('Invalid (0.0000, 0.0000) or out-of-bounds target coordinate rejected.');
+        return;
+      }
+      setGeoError(null);
+      updateTargetRef.current(clickedLat, clickedLon);
+      setInputTargetLat(clickedLat.toFixed(6));
+      setInputTargetLon(clickedLon.toFixed(6));
     });
 
     mapRef.current = map;
@@ -246,6 +294,14 @@ export const GpsTrackingMap: React.FC<GpsTrackingMapProps> = ({
         targetVectorRef.current.remove();
         targetVectorRef.current = null;
       }
+      if (predictedMarkerRef.current) {
+        predictedMarkerRef.current.remove();
+        predictedMarkerRef.current = null;
+      }
+      if (predictedDriftLineRef.current) {
+        predictedDriftLineRef.current.remove();
+        predictedDriftLineRef.current = null;
+      }
       map.remove();
       mapRef.current = null;
     };
@@ -267,8 +323,12 @@ export const GpsTrackingMap: React.FC<GpsTrackingMapProps> = ({
     const map = mapRef.current;
     if (!map) return;
 
-    // Marker A: Configurable Landing Target
-    if (targetLat !== null && targetLon !== null) {
+    // Marker A: Configurable Landing Target (only if valid non-Null-Island coordinate)
+    if (
+      targetLat !== null &&
+      targetLon !== null &&
+      isValidCoordinateFix(targetLat, targetLon, true)
+    ) {
       const targetHtml = `
         <div style="transform: translate(-50%, -50%); display: flex; flex-direction: column; align-items: center; pointer-events: none;">
           <div style="background: #ffffff; border: 1.5px solid #15803d; color: #15803d; font-family: 'JetBrains Mono', monospace; font-size: 10px; font-weight: 700; padding: 2px 6px; border-radius: 4px; white-space: nowrap; box-shadow: 0 1px 4px rgba(15,23,42,0.18);">
@@ -359,7 +419,11 @@ export const GpsTrackingMap: React.FC<GpsTrackingMapProps> = ({
         map.panTo([canSatLat, canSatLon], { animate: true, duration: 0.25 });
       }
 
-      if (targetLat !== null && targetLon !== null) {
+      if (
+        targetLat !== null &&
+        targetLon !== null &&
+        isValidCoordinateFix(targetLat, targetLon, true)
+      ) {
         const vectorCoords: [number, number][] = [
           [canSatLat, canSatLon],
           [targetLat, targetLon],
@@ -389,6 +453,67 @@ export const GpsTrackingMap: React.FC<GpsTrackingMapProps> = ({
       }
     }
 
+    // Marker D: Gated Predicted Landing Point & Drift Vector
+    if (
+      shouldDisplayPredictedOverlay(prediction, isStale, canSatLat, canSatLon) &&
+      prediction?.prediction &&
+      canSatLat !== null &&
+      canSatLon !== null
+    ) {
+      const predLat = prediction.prediction.predicted_lat_deg;
+      const predLon = prediction.prediction.predicted_lon_deg;
+      const tRemStr = `${prediction.prediction.estimated_time_to_landing_s.toFixed(0)}s`;
+
+      const predHtml = `
+        <div style="transform: translate(-50%, -100%); display: flex; flex-direction: column; align-items: center; pointer-events: none;">
+          <div style="background: #0f766e; color: #ffffff; font-family: 'JetBrains Mono', monospace; font-size: 9px; font-weight: 700; padding: 2px 6px; border-radius: 4px; border: 1.5px solid #ffffff; white-space: nowrap; box-shadow: 0 2px 6px rgba(15,118,110,0.35);">
+            EST. LANDING (${tRemStr})
+          </div>
+          <div style="width: 10px; height: 10px; background: #0f766e; border: 2px solid #ffffff; border-radius: 50%; box-shadow: 0 0 0 2px #0f766e; margin-top: 2px;"></div>
+        </div>
+      `;
+      const predIcon = L.divIcon({
+        html: predHtml,
+        className: 'overview-predicted-landing-icon',
+        iconSize: [0, 0],
+      });
+
+      if (!predictedMarkerRef.current) {
+        predictedMarkerRef.current = L.marker([predLat, predLon], {
+          icon: predIcon,
+          zIndexOffset: 900,
+          interactive: false,
+        }).addTo(map);
+      } else {
+        predictedMarkerRef.current.setLatLng([predLat, predLon]);
+        predictedMarkerRef.current.setIcon(predIcon);
+      }
+
+      const driftCoords: [number, number][] = [
+        [canSatLat, canSatLon],
+        [predLat, predLon],
+      ];
+      if (!predictedDriftLineRef.current) {
+        predictedDriftLineRef.current = L.polyline(driftCoords, {
+          color: '#0f766e',
+          weight: 2.0,
+          dashArray: '5, 5',
+          opacity: 0.9,
+        }).addTo(map);
+      } else {
+        predictedDriftLineRef.current.setLatLngs(driftCoords);
+      }
+    } else {
+      if (predictedMarkerRef.current) {
+        predictedMarkerRef.current.remove();
+        predictedMarkerRef.current = null;
+      }
+      if (predictedDriftLineRef.current) {
+        predictedDriftLineRef.current.remove();
+        predictedDriftLineRef.current = null;
+      }
+    }
+
     // Trail: Historical Valid GPS Breadcrumbs Only
     if (validTrailPoints.length > 1) {
       if (!polylineRef.current) {
@@ -414,35 +539,24 @@ export const GpsTrackingMap: React.FC<GpsTrackingMapProps> = ({
     gsLon,
     validTrailPoints,
     followVehicle,
+    prediction,
+    isStale,
   ]);
 
   const handleTargetSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    const parsedLat = parseFloat(inputTargetLat);
-    const parsedLon = parseFloat(inputTargetLon);
-
-    if (isNaN(parsedLat) || isNaN(parsedLon)) {
-      setGeoError('Enter valid decimal degrees (numbers only).');
-      return;
-    }
-
-    if (parsedLat < -90 || parsedLat > 90) {
-      setGeoError('Latitude must be between -90.0° and +90.0°.');
-      return;
-    }
-
-    if (parsedLon < -180 || parsedLon > 180) {
-      setGeoError('Longitude must be between -180.0° and +180.0°.');
+    const parsed = parseAndValidateTargetCoordinates(inputTargetLat, inputTargetLon);
+    if (!parsed.valid) {
+      setGeoError(parsed.error);
       return;
     }
 
     setGeoError(null);
-    setTargetLat(parsedLat);
-    setTargetLon(parsedLon);
+    updateTargetCoordinates(parsed.latDeg, parsed.lonDeg);
     setShowTargetModal(false);
 
     if (mapRef.current) {
-      mapRef.current.flyTo([parsedLat, parsedLon], 16, { duration: 0.8 });
+      mapRef.current.flyTo([parsed.latDeg, parsed.lonDeg], 16, { duration: 0.8 });
     }
   };
 
@@ -600,7 +714,7 @@ export const GpsTrackingMap: React.FC<GpsTrackingMapProps> = ({
           className="absolute inset-0 w-full h-full z-0"
         />
 
-        {/* Top-Left Overlay: CanSat Live Coordinates */}
+        {/* Top-Left Overlay: CanSat Live Coordinates & Gated Predicted Landing */}
         <div className="absolute top-2.5 left-2.5 bg-[var(--bg-surface-1)]/95 border border-[var(--border-subtle)] px-2.5 py-1.5 font-mono-data text-[10px] text-[var(--text-secondary)] flex flex-col gap-0.5 shadow-[var(--shadow-sm)] backdrop-blur-xs z-10 pointer-events-none rounded-[var(--radius-sm)]">
           <div className="flex gap-2 items-center">
             <span className="text-[var(--text-tertiary)]">Vehicle Pos:</span>
@@ -612,6 +726,24 @@ export const GpsTrackingMap: React.FC<GpsTrackingMapProps> = ({
               }`}
             >
               {formatCoordinates(canSatLat, canSatLon)}
+            </span>
+          </div>
+          <div className="flex gap-2 items-center">
+            <span className="text-[var(--text-tertiary)]">Est. Landing:</span>
+            <span
+              className={`font-bold tabular-nums ${
+                shouldDisplayPredictedOverlay(prediction, isStale, canSatLat, canSatLon)
+                  ? 'text-[var(--accent-teal)]'
+                  : 'text-[var(--status-warning)]'
+              }`}
+            >
+              {shouldDisplayPredictedOverlay(prediction, isStale, canSatLat, canSatLon) &&
+              prediction?.prediction
+                ? formatCoordinates(
+                    prediction.prediction.predicted_lat_deg,
+                    prediction.prediction.predicted_lon_deg
+                  )
+                : `GATED (${isStale ? 'STALE_TELEMETRY' : prediction?.reason_code ?? 'NO_DATA'})`}
             </span>
           </div>
           <div className="flex gap-2 items-center">
@@ -729,8 +861,7 @@ export const GpsTrackingMap: React.FC<GpsTrackingMapProps> = ({
                     <button
                       type="button"
                       onClick={() => {
-                        setTargetLat(null);
-                        setTargetLon(null);
+                        updateTargetCoordinates(null, null);
                         setInputTargetLat('');
                         setInputTargetLon('');
                         setShowTargetModal(false);

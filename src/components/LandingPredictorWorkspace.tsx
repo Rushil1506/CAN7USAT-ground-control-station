@@ -28,9 +28,10 @@ import {
   PredictionResponsePayload,
   PredictorBackendConnection,
   PredictorConfigPayload,
+  PredictorRequestCoordinator,
   computeLocalPhysicsPrediction,
-  evaluateLandingPredictionWithBackend,
   isValidCoordinateFix,
+  parseAndValidateTargetCoordinates,
 } from '../services/landingPredictorClient';
 import { TelemetryPacket, TelemetrySource } from '../types';
 
@@ -40,6 +41,8 @@ interface LandingPredictorWorkspaceProps {
   telemetrySource: TelemetrySource;
   isStale: boolean;
   packetAgeSeconds: number | null;
+  config?: PredictorConfigPayload;
+  onUpdateConfig?: React.Dispatch<React.SetStateAction<PredictorConfigPayload>>;
 }
 
 function isPacketGpsValid(
@@ -71,10 +74,25 @@ export const LandingPredictorWorkspace: React.FC<LandingPredictorWorkspaceProps>
   telemetrySource,
   isStale,
   packetAgeSeconds,
+  config: externalConfig,
+  onUpdateConfig,
 }) => {
-  const [config, setConfig] = useState<PredictorConfigPayload>(() => ({
+  const [internalConfig, setInternalConfig] = useState<PredictorConfigPayload>(() => ({
     ...DEFAULT_PREDICTOR_CONFIG,
   }));
+
+  const config = externalConfig ?? internalConfig;
+  const setConfig = onUpdateConfig ?? setInternalConfig;
+
+  const coordinatorRef = useRef<PredictorRequestCoordinator | null>(null);
+  if (!coordinatorRef.current) {
+    coordinatorRef.current = new PredictorRequestCoordinator({
+      minPollIntervalMs: 1000,
+      initialBackoffMs: 3000,
+      maxBackoffMs: 15000,
+      requestTimeoutMs: 500,
+    });
+  }
 
   const [backendStatus, setBackendStatus] =
     useState<PredictorBackendConnection>('LOCAL_FALLBACK_ACTIVE');
@@ -93,29 +111,44 @@ export const LandingPredictorWorkspace: React.FC<LandingPredictorWorkspaceProps>
   const [remotePrediction, setRemotePrediction] =
     useState<PredictionResponsePayload | null>(null);
 
-  // Immediately clear any cached remote prediction when switching telemetry sources
+  // Immediately clear any cached remote prediction and abort in-flight requests when switching sources
   useEffect(() => {
+    coordinatorRef.current?.cancelPending();
     setRemotePrediction(null);
   }, [telemetrySource]);
 
-  // Query Python HTTP service when history or config updates; clear remote result on source change
+  // Cancel any pending network request on unmount
+  useEffect(() => {
+    const coordinator = coordinatorRef.current;
+    return () => {
+      coordinator?.cancelPending();
+    };
+  }, []);
+
+  // Query Python HTTP service via bounded/backoff coordinator; ignore stale or superseded responses
   useEffect(() => {
     let cancelled = false;
-    void evaluateLandingPredictionWithBackend(
-      historyPackets,
-      config,
-      telemetrySource,
-      packetAgeSeconds,
-      isStale
-    ).then(({ response, backendStatus: status }) => {
-      if (cancelled) return;
-      setBackendStatus(status);
-      if (status === 'PYTHON_HTTP_ONLINE') {
-        setRemotePrediction(response);
-      } else {
-        setRemotePrediction(null);
-      }
-    });
+    const coordinator = coordinatorRef.current;
+    if (!coordinator) return;
+
+    void coordinator
+      .evaluate({
+        historyPackets,
+        config,
+        telemetrySource,
+        packetAgeSeconds,
+        isStaleOverride: isStale,
+      })
+      .then((result) => {
+        if (cancelled || result.stale) return;
+        setBackendStatus(result.backendStatus);
+        if (result.backendStatus === 'PYTHON_HTTP_ONLINE') {
+          setRemotePrediction(result.response);
+        } else {
+          setRemotePrediction(null);
+        }
+      });
+
     return () => {
       cancelled = true;
     };
@@ -153,9 +186,24 @@ export const LandingPredictorWorkspace: React.FC<LandingPredictorWorkspaceProps>
 
   const [mapType, setMapType] = useState<'osm' | 'satellite' | 'dark'>('osm');
   const [followVehicle, setFollowVehicle] = useState<boolean>(true);
-  const [targetLatInput, setTargetLatInput] = useState<string>('');
-  const [targetLonInput, setTargetLonInput] = useState<string>('');
+  const [targetLatInput, setTargetLatInput] = useState<string>(() =>
+    config.target_lat_deg !== null ? config.target_lat_deg.toFixed(6) : ''
+  );
+  const [targetLonInput, setTargetLonInput] = useState<string>(() =>
+    config.target_lon_deg !== null ? config.target_lon_deg.toFixed(6) : ''
+  );
   const [targetError, setTargetError] = useState<string | null>(null);
+
+  // Keep input fields synchronized when shared target is updated from Overview or map click
+  useEffect(() => {
+    if (config.target_lat_deg !== null && config.target_lon_deg !== null) {
+      setTargetLatInput(config.target_lat_deg.toFixed(6));
+      setTargetLonInput(config.target_lon_deg.toFixed(6));
+    } else {
+      setTargetLatInput('');
+      setTargetLonInput('');
+    }
+  }, [config.target_lat_deg, config.target_lon_deg]);
 
   const isSim = telemetrySource === 'SIMULATION';
   const isGpsValid = isPacketGpsValid(latestPacket);
@@ -216,6 +264,10 @@ export const LandingPredictorWorkspace: React.FC<LandingPredictorWorkspaceProps>
     map.on('click', (e: L.LeafletMouseEvent) => {
       const clickedLat = Number(e.latlng.lat.toFixed(6));
       const clickedLon = Number(e.latlng.lng.toFixed(6));
+      if (!isValidCoordinateFix(clickedLat, clickedLon, true)) {
+        setTargetError('Invalid (0.0000, 0.0000) or out-of-bounds target coordinate.');
+        return;
+      }
       setConfig((prev) => ({
         ...prev,
         target_lat_deg: clickedLat,
@@ -515,25 +567,16 @@ export const LandingPredictorWorkspace: React.FC<LandingPredictorWorkspaceProps>
 
   const handleApplyTarget = (e: React.FormEvent) => {
     e.preventDefault();
-    const lat = parseFloat(targetLatInput);
-    const lon = parseFloat(targetLonInput);
-    if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
-      setTargetError('Enter valid decimal degrees for target latitude and longitude.');
-      return;
-    }
-    if (lat < -90 || lat > 90 || lon < -180 || lon > 180) {
-      setTargetError('Target coordinates out of geographic bounds.');
-      return;
-    }
-    if (Math.abs(lat) < 1e-5 && Math.abs(lon) < 1e-5) {
-      setTargetError('Target cannot be (0.0, 0.0).');
+    const parsed = parseAndValidateTargetCoordinates(targetLatInput, targetLonInput);
+    if (!parsed.valid) {
+      setTargetError(parsed.error);
       return;
     }
     setTargetError(null);
     setConfig((prev) => ({
       ...prev,
-      target_lat_deg: lat,
-      target_lon_deg: lon,
+      target_lat_deg: parsed.latDeg,
+      target_lon_deg: parsed.lonDeg,
     }));
   };
 
@@ -559,9 +602,9 @@ export const LandingPredictorWorkspace: React.FC<LandingPredictorWorkspaceProps>
       : 'bg-[var(--status-alert-bg)] text-[var(--status-alert)] border-[var(--status-alert)]/30';
 
   return (
-    <div className="flex flex-col lg:flex-row gap-3 h-full w-full overflow-y-auto lg:overflow-hidden p-1.5">
+    <div className="flex flex-col lg:flex-row gap-3 h-full w-full overflow-y-auto lg:overflow-hidden p-1.5 min-h-0 min-w-0">
       {/* LEFT / CENTER COLUMN: Map-First Geospatial Canvas (66% width on desktop) */}
-      <div className="flex-1 flex flex-col ops-card overflow-hidden min-h-[480px] lg:min-h-0">
+      <div className="flex-1 min-w-0 flex flex-col ops-card overflow-hidden min-h-[460px] lg:min-h-0">
         {/* Top Geospatial Status & Controls Header */}
         <div className="px-4 py-2.5 bg-[var(--bg-surface-1)] border-b border-[var(--border-subtle)] flex flex-wrap items-center justify-between gap-2">
           <div className="flex items-center gap-2.5">
@@ -831,7 +874,7 @@ export const LandingPredictorWorkspace: React.FC<LandingPredictorWorkspaceProps>
       </div>
 
       {/* RIGHT COLUMN: Structured Inspector Rail (34% width on desktop) */}
-      <div className="w-full lg:w-[430px] xl:w-[460px] flex flex-col gap-3 overflow-y-auto h-full pr-0.5">
+      <div className="w-full lg:w-[430px] xl:w-[460px] shrink-0 flex flex-col gap-3 overflow-y-auto h-full pr-0.5 min-h-0">
         {/* CARD 1: Predicted Landing Coordinates & Drift Kinematics */}
         <section className="ops-card p-4 space-y-3">
           <div className="flex items-center justify-between border-b border-[var(--border-subtle)] pb-2.5">
@@ -1256,7 +1299,7 @@ export const LandingPredictorWorkspace: React.FC<LandingPredictorWorkspaceProps>
                     OBSERVED_RATE (Default — Current Vertical Rate)
                   </option>
                   <option value="TWO_STAGE_CONFIGURABLE">
-                    TWO_STAGE_CONFIGURABLE (Stage 1 -&gt; Disreef -&gt; Stage 2)
+                    TWO_STAGE_CONFIGURABLE (Drogue -&gt; Parafoil at transition alt)
                   </option>
                 </select>
               </div>
@@ -1265,20 +1308,20 @@ export const LandingPredictorWorkspace: React.FC<LandingPredictorWorkspaceProps>
                 <>
                   <div>
                     <label
-                      htmlFor="lp-disreef-alt"
+                      htmlFor="lp-parafoil-alt"
                       className="block text-[11px] font-medium text-[var(--text-secondary)] mb-1"
                     >
-                      Disreef Transition Alt (m)
+                      Parafoil Transition Alt (m)
                     </label>
                     <input
-                      id="lp-disreef-alt"
+                      id="lp-parafoil-alt"
                       type="number"
                       step={10}
-                      value={config.disreef_transition_altitude_m}
+                      value={config.parafoil_transition_altitude_m}
                       onChange={(e) =>
                         setConfig((prev) => ({
                           ...prev,
-                          disreef_transition_altitude_m:
+                          parafoil_transition_altitude_m:
                             Math.max(10, Number(e.target.value) || 600),
                         }))
                       }

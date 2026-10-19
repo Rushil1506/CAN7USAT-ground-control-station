@@ -50,7 +50,7 @@ export const SerialLinkPanel: React.FC<SerialLinkPanelProps> = ({
   const txCountDisplay = typeof config.txCount === 'number' && Number.isFinite(config.txCount) ? config.txCount : null;
 
   return (
-    <div className="telemetry-panel panel-gray-accent p-2.5 select-none flex flex-col gap-2">
+    <div className="ops-card p-3 select-none flex flex-col gap-2">
       {/* Header Row */}
       <div className="flex justify-between items-center gap-1">
         <div className="flex items-center gap-1.5 min-w-0">

@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Play, Pause, Sliders, Zap, RotateCcw, Terminal, Check, X, ShieldAlert } from 'lucide-react';
+import { Play, Pause, Sliders, Zap, RotateCcw, Terminal, Check, X } from 'lucide-react';
 import { TelemetrySource } from '../types';
 
 interface MissionControlPanelProps {
@@ -11,6 +11,11 @@ interface MissionControlPanelProps {
   onResetSimulation: () => void;
 }
 
+/**
+ * Simulator controls. These only exist in SIMULATION mode.
+ * In LIVE_SERIAL mode the component renders nothing (no disabled buttons or placeholders):
+ * the live view is receive-only monitoring, and link status lives in the serial link panel.
+ */
 export const MissionControlPanel: React.FC<MissionControlPanelProps> = ({
   telemetrySource,
   isRunning,
@@ -84,81 +89,55 @@ export const MissionControlPanel: React.FC<MissionControlPanelProps> = ({
     showTemporaryStatus('SIM RESET: TIMELINE RESTORED TO T=0.0s', 'amber');
   };
 
+  // Live Serial: render nothing. No disabled simulator controls, no empty placeholder.
+  if (!isSim) return null;
+
   return (
-    <div className="telemetry-panel panel-amber-accent p-2.5 select-none flex flex-col gap-2">
+    <div
+      className="ops-card p-3 select-none flex flex-col gap-2"
+      data-testid="sim-mission-control"
+    >
       {/* Header */}
       <div className="flex justify-between items-center">
         <div className="flex items-center gap-1.5">
           <Terminal className="w-3.5 h-3.5 text-[var(--action-amber)]" />
           <span className="font-mono-data text-[11px] font-bold text-[var(--text-primary)] uppercase tracking-wider">
-            MISSION CONTROL
+            SIMULATOR CONTROL
           </span>
         </div>
-        <span
-          className={`font-mono-data text-[9px] px-1.5 py-0.5 border rounded-[var(--radius-xs)] uppercase ${
-            isSim
-              ? 'bg-[var(--bg-surface-2)] text-[var(--action-amber)] border-[var(--border-subtle)]'
-              : 'bg-[var(--status-warning-bg)] text-[var(--status-warning)] border-[var(--status-warning)]/40 font-bold'
-          }`}
-        >
-          {isSim ? 'SIM COMMANDS' : 'HW TX DISABLED'}
+        <span className="font-mono-data text-[9px] px-1.5 py-0.5 border rounded-[var(--radius-xs)] uppercase bg-[var(--bg-surface-2)] text-[var(--action-amber)] border-[var(--border-subtle)]">
+          SIM COMMANDS
         </span>
       </div>
 
-      {!isSim && (
-        <div className="flex items-start gap-1.5 px-2 py-1.5 bg-[var(--bg-base)] border border-[var(--border-subtle)] rounded-[var(--radius-xs)] font-mono-data text-[9px] text-[var(--text-secondary)] leading-snug">
-          <ShieldAlert className="w-3.5 h-3.5 text-[var(--action-amber)] shrink-0 mt-0.5" />
-          <span>
-            Receive-only serial mode active. Hardware telecommands and simulator controls are disabled.
-          </span>
-        </div>
-      )}
-
-      {/* Primary Action GO / Pause Button (Simulation Only) */}
+      {/* Primary Action GO / Pause Button */}
       <button
         type="button"
-        onClick={() => {
-          if (isSim) onTogglePlay();
-        }}
-        disabled={!isSim}
-        title={isSim ? 'Pause or Resume Local Telemetry Simulator' : 'Simulation control disabled in Live Serial mode'}
-        className={`w-full font-mono-data text-xs py-2.5 px-3 uppercase transition-colors cursor-pointer font-bold tracking-wider flex items-center justify-center gap-2 rounded-[var(--radius-sm)] disabled:opacity-40 disabled:cursor-not-allowed ${
-          !isSim
-            ? 'bg-[var(--bg-surface-2)] text-[var(--text-tertiary)] border border-[var(--border-subtle)]'
-            : isRunning
+        onClick={onTogglePlay}
+        title="Pause or Resume Local Telemetry Simulator"
+        className={`w-full font-mono-data text-xs py-2.5 px-3 uppercase transition-colors cursor-pointer font-bold tracking-wider flex items-center justify-center gap-2 rounded-[var(--radius-sm)] ${
+          isRunning
             ? 'go-button'
             : 'bg-[var(--status-nominal)] hover:opacity-95 text-[var(--text-inverted)] border border-[var(--border-nominal)]'
         }`}
       >
-        {isRunning && isSim ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5 fill-current" />}
-        <span>
-          {!isSim
-            ? 'SIM STREAM INACTIVE (LIVE SERIAL)'
-            : isRunning
-            ? 'PAUSE SIM TELEMETRY'
-            : 'START SIM TELEMETRY'}
-        </span>
+        {isRunning ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5 fill-current" />}
+        <span>{isRunning ? 'PAUSE SIM TELEMETRY' : 'START SIM TELEMETRY'}</span>
       </button>
 
-      {/* Secondary Action Button: CALIBRATE SENSORS (Simulated Local Command Only) */}
+      {/* Calibrate Sensors (simulated local command only) */}
       <button
         type="button"
         onClick={handleCalibrate}
-        disabled={!isSim || calibrating}
-        title={
-          isSim
-            ? 'Dispatch simulated calibration telecommand (local simulator only)'
-            : 'Unavailable in Live Serial receive-only mode'
-        }
+        disabled={calibrating}
+        title="Dispatch simulated calibration command (local simulator only)"
         className="w-full bg-[var(--bg-surface-2)] text-[var(--text-primary)] font-mono-data text-[11px] py-1.5 px-2.5 uppercase hover:bg-[var(--bg-surface-hover)] border border-[var(--border-subtle)] hover:border-[var(--border-focus)] transition-colors cursor-pointer flex items-center justify-between disabled:opacity-40 disabled:cursor-not-allowed rounded-[var(--radius-sm)]"
       >
         <span className="flex items-center gap-1.5 font-semibold">
           <Sliders className="w-3.5 h-3.5 text-[var(--action-amber)]" />
           <span>{calibrating ? 'CALIBRATING (SIM)...' : 'CALIBRATE SENSORS'}</span>
         </span>
-        <span className="text-[9px] text-[var(--text-tertiary)] font-normal">
-          {isSim ? 'SIM ONLY' : 'UNAVAILABLE'}
-        </span>
+        <span className="text-[9px] text-[var(--text-tertiary)] font-normal">SIM ONLY</span>
       </button>
 
       {/* Simulation Test & Reset Controls */}
@@ -167,13 +146,8 @@ export const MissionControlPanel: React.FC<MissionControlPanelProps> = ({
           <button
             type="button"
             onClick={handleTurbulence}
-            disabled={!isSim}
-            title={
-              isSim
-                ? 'Inject simulated 1.5G pitch/roll disturbance impulse'
-                : 'Simulation disturbance disabled in Live Serial mode'
-            }
-            className="bg-[var(--bg-surface-2)] text-[var(--status-info)] hover:bg-[var(--bg-surface-hover)] border border-[var(--border-subtle)] hover:border-[var(--border-focus)] py-1.5 px-2 font-mono-data text-[10px] font-semibold uppercase transition-colors cursor-pointer flex items-center justify-center gap-1 rounded-[var(--radius-sm)] disabled:opacity-40 disabled:cursor-not-allowed"
+            title="Inject simulated 1.5G pitch/roll disturbance impulse"
+            className="bg-[var(--bg-surface-2)] text-[var(--status-info)] hover:bg-[var(--bg-surface-hover)] border border-[var(--border-subtle)] hover:border-[var(--border-focus)] py-1.5 px-2 font-mono-data text-[10px] font-semibold uppercase transition-colors cursor-pointer flex items-center justify-center gap-1 rounded-[var(--radius-sm)]"
           >
             <Zap className="w-3 h-3 text-[var(--status-info)] shrink-0" />
             <span>TURBULENCE (SIM)</span>
@@ -181,16 +155,9 @@ export const MissionControlPanel: React.FC<MissionControlPanelProps> = ({
 
           <button
             type="button"
-            onClick={() => {
-              if (isSim) setConfirmingReset(true);
-            }}
-            disabled={!isSim}
-            title={
-              isSim
-                ? 'Reset simulated mission timeline to T=0.0s'
-                : 'Simulation reset disabled in Live Serial mode'
-            }
-            className="bg-[var(--bg-surface-2)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-surface-hover)] border border-[var(--border-subtle)] hover:border-[var(--border-focus)] py-1.5 px-2 font-mono-data text-[10px] font-semibold uppercase transition-colors cursor-pointer flex items-center justify-center gap-1 rounded-[var(--radius-sm)] disabled:opacity-40 disabled:cursor-not-allowed"
+            onClick={() => setConfirmingReset(true)}
+            title="Reset simulated mission timeline to T=0.0s"
+            className="bg-[var(--bg-surface-2)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-surface-hover)] border border-[var(--border-subtle)] hover:border-[var(--border-focus)] py-1.5 px-2 font-mono-data text-[10px] font-semibold uppercase transition-colors cursor-pointer flex items-center justify-center gap-1 rounded-[var(--radius-sm)]"
           >
             <RotateCcw className="w-3 h-3 text-[var(--text-secondary)] shrink-0" />
             <span>RESTART SIM</span>
@@ -222,9 +189,7 @@ export const MissionControlPanel: React.FC<MissionControlPanelProps> = ({
 
       {/* Command Feedback / Provenance Status Bar */}
       <div className="flex items-center justify-between px-2 py-1 bg-[var(--bg-base)] border border-[var(--border-muted)] rounded-[var(--radius-xs)] font-mono-data text-[9px]">
-        {!isSim ? (
-          <span className="text-[var(--text-tertiary)]">TELECOMMANDS: UNAVAILABLE (RECEIVE-ONLY)</span>
-        ) : statusFeedback ? (
+        {statusFeedback ? (
           <span
             className={`font-semibold truncate ${
               statusFeedback.tone === 'nominal'
@@ -239,9 +204,7 @@ export const MissionControlPanel: React.FC<MissionControlPanelProps> = ({
         ) : (
           <span className="text-[var(--text-tertiary)]">TARGET: LOCAL SIMULATOR (NO HW TX)</span>
         )}
-        <span className="text-[var(--text-tertiary)] shrink-0 ml-1">
-          {!isSim ? 'RX ONLY' : isRunning ? '10 Hz' : 'PAUSED'}
-        </span>
+        <span className="text-[var(--text-tertiary)] shrink-0 ml-1">{isRunning ? '10 Hz' : 'PAUSED'}</span>
       </div>
     </div>
   );

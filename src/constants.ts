@@ -1,7 +1,9 @@
 import { FlightStateCode, FlightStateInfo } from './types';
 
 export const TEAM_INFO = {
-  id: '2026-INSPACe-CAN-7USAT-332',
+  id: '2026-IN-SPACe-CAN-7USAT-017',
+  number: '017',
+  displayLabel: 'CAN-7USAT | TEAM 017',
   pdrId: 'RITM0021257',
   name: 'Team Parikshit',
   competition: 'IN-SPACe CAN-7USAT India Student Competition 2026-27 (3rd Edition)',
@@ -58,15 +60,15 @@ export const FLIGHT_STATES: Record<FlightStateCode, FlightStateInfo> = {
   },
   [FlightStateCode.DESCENT]: {
     code: FlightStateCode.DESCENT,
-    label: '5: DESCENT (REEFED)',
-    description: 'Stage 1 Reefed Parachute (1000m -> 600m @ 17m/s, 12,000 RPM wheel)',
+    label: '5: DESCENT (DROGUE)',
+    description: 'Stage 1 drogue parachute descent (1000m -> ~600m @ 17m/s)',
     color: '#0f766e',
     bgGlow: 'rgba(15, 118, 110, 0.14)',
   },
   [FlightStateCode.AEROBREAK_RELEASE]: {
     code: FlightStateCode.AEROBREAK_RELEASE,
-    label: '6: AEROBREAK (600m DISREEFED)',
-    description: 'Stage 2 Disreefed Parachute (600m -> 0m @ 1-3m/s, burnwire active)',
+    label: '6: PARAFOIL (~600m)',
+    description: 'Stage 2 main parafoil phase (~600m -> 0m @ 1-3m/s, two-servo steering)',
     color: '#b91c1c',
     bgGlow: 'rgba(185, 28, 28, 0.14)',
   },
@@ -80,7 +82,7 @@ export const FLIGHT_STATES: Record<FlightStateCode, FlightStateInfo> = {
 };
 
 export const AVAILABLE_PORTS = [
-  'COM10 (Zeminet LoRa-Mod865 865MHz)',
+  'COM10 (Zeminet LoRa 865.50MHz)',
   'COM4 (Digi XBee-PRO S2C 2.4GHz)',
   'ttyUSB0 (Teensy 4.1 USB Serial)',
   'SIMULATOR (Flight Engine Loopback)',

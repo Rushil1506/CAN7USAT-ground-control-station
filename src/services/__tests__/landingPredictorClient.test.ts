@@ -297,7 +297,7 @@ describe('landingPredictorClient — Stage 3 ENU Physics & Validity Gates', () =
   });
 
   it('independently computes Stage 1 and Stage 2 time-to-landing in TWO_STAGE_CONFIGURABLE mode', () => {
-    // Descending at 17.0 m/s from 840 m down to 670 m (above 500 m disreef)
+    // Descending at 17.0 m/s from 840 m down to 670 m (above 500 m transition)
     const stage1Packets: TelemetryPacket[] = [];
     for (let s = 0; s <= 10; s++) {
       stage1Packets.push(
@@ -310,7 +310,7 @@ describe('landingPredictorClient — Stage 3 ENU Physics & Validity Gates', () =
       {
         ...DEFAULT_PREDICTOR_CONFIG,
         propagation_mode: 'TWO_STAGE_CONFIGURABLE',
-        disreef_transition_altitude_m: 500.0,
+        parafoil_transition_altitude_m: 500.0,
         stage1_nominal_descent_rate_ms: 17.0,
         stage2_nominal_descent_rate_ms: 2.2,
       },
@@ -361,7 +361,7 @@ describe('landingPredictorClient — Stage 3 ENU Physics & Validity Gates', () =
     const cfgTwoStage: PredictorConfigPayload = {
       ...DEFAULT_PREDICTOR_CONFIG,
       propagation_mode: 'TWO_STAGE_CONFIGURABLE',
-      disreef_transition_altitude_m: 550.0,
+      parafoil_transition_altitude_m: 550.0,
       stage1_nominal_descent_rate_ms: 16.5,
       stage2_nominal_descent_rate_ms: 2.3,
     };

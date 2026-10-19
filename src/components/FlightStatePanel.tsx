@@ -72,7 +72,7 @@ export const FlightStatePanel: React.FC<FlightStatePanelProps> = ({
   const accentColor = stateInfo ? stateInfo.color : '#388BFD';
 
   return (
-    <div className="telemetry-panel panel-amber-accent p-2.5 select-none flex flex-col gap-2">
+    <div className="ops-card p-3 select-none flex flex-col gap-2">
       {/* Header & Sim Override Selector */}
       <div className="flex justify-between items-center gap-2">
         <div className="flex items-center gap-1.5 min-w-0">
@@ -181,26 +181,32 @@ export const FlightStatePanel: React.FC<FlightStatePanelProps> = ({
             const isCurrent = currentStateCode === code;
             const isPassed = currentStateCode !== null && currentStateCode > code;
             const st = FLIGHT_STATES[code];
+            const stepClass = `h-5 font-mono-data text-[9px] tabular-nums transition-colors rounded-[var(--radius-xs)] border flex items-center justify-center ${
+              isCurrent
+                ? 'bg-[var(--action-amber)] text-[var(--action-amber-contrast)] border-[var(--border-amber)] font-bold'
+                : isPassed
+                ? 'bg-[var(--status-nominal-bg)] text-[var(--status-nominal)] border-[var(--status-nominal)]/40 font-semibold'
+                : 'bg-[var(--bg-surface-2)] text-[var(--text-tertiary)] border-[var(--border-subtle)]'
+            }`;
+            // Live Serial: read-only phase indicator (not a button). Simulation: interactive force-state button.
+            if (!isSim) {
+              return (
+                <div
+                  key={code}
+                  title={`Phase [${st.code}] ${st.label}: ${st.description}`}
+                  className={stepClass}
+                >
+                  {code}
+                </div>
+              );
+            }
             return (
               <button
                 key={code}
                 type="button"
-                disabled={!isSim}
                 onClick={() => handleStepClick(code)}
-                title={
-                  isSim
-                    ? `Force Sim State [${st.code}] ${st.label}: ${st.description}`
-                    : `Phase [${st.code}] ${st.label} (override disabled in Live Serial mode)`
-                }
-                className={`h-5 font-mono-data text-[9px] tabular-nums transition-colors rounded-[var(--radius-xs)] border flex items-center justify-center ${
-                  !isSim ? 'cursor-default' : 'cursor-pointer'
-                } ${
-                  isCurrent
-                    ? 'bg-[var(--action-amber)] text-[var(--action-amber-contrast)] border-[var(--border-amber)] font-bold'
-                    : isPassed
-                    ? 'bg-[var(--status-nominal-bg)] text-[var(--status-nominal)] border-[var(--status-nominal)]/40 font-semibold'
-                    : 'bg-[var(--bg-surface-2)] text-[var(--text-tertiary)] border-[var(--border-subtle)] hover:text-[var(--text-primary)]'
-                }`}
+                title={`Force Sim State [${st.code}] ${st.label}: ${st.description}`}
+                className={`${stepClass} cursor-pointer hover:text-[var(--text-primary)]`}
               >
                 {code}
               </button>

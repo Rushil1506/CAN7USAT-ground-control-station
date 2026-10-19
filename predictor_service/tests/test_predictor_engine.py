@@ -6,7 +6,7 @@ Covers:
 2. Deterministic synthetic trajectories with known ground-truth landing coordinates:
    - Constant ground velocity + constant descent rate (exact kinematic baseline).
    - Two-stage descent rate transition: independent verification of Stage 1 and Stage 2
-     time-to-landing calculations above, at, and below disreef transition altitude.
+     time-to-landing calculations above, at, and below parafoil transition altitude.
    - Parametric sensitivity studies quantifying how horizontal prediction error and OLS
      velocity standard error scale with:
      (a) GPS horizontal noise sigma (0.0 m, 0.5 m, 1.5 m, 3.0 m),
@@ -93,7 +93,7 @@ def generate_constant_velocity_trajectory(
 
 def generate_two_stage_trajectory(
     apogee_alt_m: float = 840.0,
-    disreef_alt_m: float = 500.0,
+    transition_alt_m: float = 500.0,
     v_desc_stage1_ms: float = 17.0,
     v_desc_stage2_ms: float = 2.2,
     v_east_ms: float = 3.2,
@@ -102,11 +102,11 @@ def generate_two_stage_trajectory(
 ) -> Tuple[List[TelemetryPointInput], float, float, float]:
     """
     Generate a deterministic synthetic two-stage descent trajectory:
-    - Stage 1 (apogee_alt_m down to disreef_alt_m): vertical descent rate = v_desc_stage1_ms
-    - Stage 2 (disreef_alt_m down to 0 m): vertical descent rate = v_desc_stage2_ms
+    - Stage 1 (apogee_alt_m down to transition_alt_m): vertical descent rate = v_desc_stage1_ms
+    - Stage 2 (transition_alt_m down to 0 m): vertical descent rate = v_desc_stage2_ms
     """
-    t_stage1_s = (apogee_alt_m - disreef_alt_m) / v_desc_stage1_ms
-    t_stage2_s = disreef_alt_m / v_desc_stage2_ms
+    t_stage1_s = (apogee_alt_m - transition_alt_m) / v_desc_stage1_ms
+    t_stage2_s = transition_alt_m / v_desc_stage2_ms
     total_time_s = t_stage1_s + t_stage2_s
 
     true_east_landing_m = v_east_ms * total_time_s
@@ -122,7 +122,7 @@ def generate_two_stage_trajectory(
             alt_m = apogee_alt_m - v_desc_stage1_ms * t_s
             vz = -v_desc_stage1_ms
         else:
-            alt_m = max(0.0, disreef_alt_m - v_desc_stage2_ms * (t_s - t_stage1_s))
+            alt_m = max(0.0, transition_alt_m - v_desc_stage2_ms * (t_s - t_stage1_s))
             vz = -v_desc_stage2_ms
 
         east_m = v_east_ms * t_s
@@ -206,13 +206,13 @@ class TestSyntheticTrajectoriesNumericalValidation:
         """
         Independently verify:
         1. Default PredictorConfig keeps propagation_mode == OBSERVED_RATE and mission_profile_verified == False.
-        2. Above disreef (t = 10 s, alt = 670 m > 500 m):
+        2. Above transition altitude (t = 10 s, alt = 670 m > 500 m):
            - Stage 1 remaining time: (670 - 500) / 17.0 = 10.00 s
            - Stage 2 remaining time: 500 / 2.2 = 227.2727 s
            - Total time to landing: 237.27 s (vs. 670 / 17.0 = 39.41 s in OBSERVED_RATE)
-        3. Exactly at disreef transition (t = 20 s, alt = 500 m):
+        3. Exactly at parafoil transition (t = 20 s, alt = 500 m):
            - Stage 1 remaining time is 0.0 s; total time is 500 / v_obs.
-        4. Below disreef after window clears transition (t = 50 s, alt = 434 m < 500 m):
+        4. Below transition after window clears transition (t = 50 s, alt = 434 m < 500 m):
            - Stage 1 remaining time is 0.0 s, Stage 2 remaining time is 434 / 2.2 = 197.2727 s,
              and both modes agree to within < 0.05 m horizontal error.
         """
@@ -223,7 +223,7 @@ class TestSyntheticTrajectoriesNumericalValidation:
 
         points, true_lat, true_lon, _ = generate_two_stage_trajectory(
             apogee_alt_m=840.0,
-            disreef_alt_m=500.0,
+            transition_alt_m=500.0,
             v_desc_stage1_ms=17.0,
             v_desc_stage2_ms=2.2,
             v_east_ms=3.2,
@@ -234,13 +234,13 @@ class TestSyntheticTrajectoriesNumericalValidation:
         two_stage_predictor = PhysicsBaselinePredictor(
             PredictorConfig(
                 propagation_mode=DescentPropagationMode.TWO_STAGE_CONFIGURABLE,
-                disreef_transition_altitude_m=500.0,
+                parafoil_transition_altitude_m=500.0,
                 stage1_nominal_descent_rate_ms=17.0,
                 stage2_nominal_descent_rate_ms=2.2,
             )
         )
 
-        # Case A: Above disreef (t = 10 s, alt = 670.0 m)
+        # Case A: Above transition altitude (t = 10 s, alt = 670.0 m)
         resp_obs_high = obs_predictor.predict_from_sequence(points[:11])
         resp_2st_high = two_stage_predictor.predict_from_sequence(points[:11])
         assert resp_obs_high.valid and resp_obs_high.prediction is not None
@@ -268,13 +268,13 @@ class TestSyntheticTrajectoriesNumericalValidation:
         assert 720.0 <= err_obs_high_m <= 735.0
         assert err_2st_high_m < 0.05
 
-        # Case B: Exactly at disreef boundary (t = 20 s, alt = 500.0 m)
+        # Case B: Exactly at transition boundary (t = 20 s, alt = 500.0 m)
         resp_2st_boundary = two_stage_predictor.predict_from_sequence(points[:21])
         assert resp_2st_boundary.valid and resp_2st_boundary.prediction is not None
         assert resp_2st_boundary.prediction.stage1_time_remaining_s == 0.0
         assert resp_2st_boundary.prediction.propagation_mode_used == "OBSERVED_RATE"
 
-        # Case C: Well below disreef (t = 50 s, alt = 434.0 m)
+        # Case C: Well below transition (t = 50 s, alt = 434.0 m)
         resp_obs_low = obs_predictor.predict_from_sequence(points[:51])
         resp_2st_low = two_stage_predictor.predict_from_sequence(points[:51])
         assert resp_obs_low.valid and resp_obs_low.prediction is not None
