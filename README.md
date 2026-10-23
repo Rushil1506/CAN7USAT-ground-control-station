@@ -86,41 +86,41 @@ Local Tangent-Plane (ENU) physics propagation, two-stage descent phase modeling 
 ```mermaid
 flowchart TD
     subgraph Inputs["Telemetry Ingestion"]
-        HW["Hardware Transceiver (SX1262 LoRa 866.5 MHz)"] -->|USB Serial @ 115200| WS["Web Serial API Line Buffer"]
+        HW["Hardware Transceiver (SX1262 LoRa 866.5 MHz)"] -->|"USB Serial @ 115200"| WS["Web Serial API Line Buffer"]
         SIM["Synthetic Flight Engine (10 Hz)"] --> SIM_BUF["Simulation Packet Buffer"]
     end
 
     subgraph Core["State & Validation Gate"]
-        WS --> PARSER["telemetryParser.ts\n• 19-field CSV validation\n• Trailing comma tolerance\n• (0,0) GPS rejection\n• Unit conversion (Pa → hPa)"]
+        WS --> PARSER["telemetryParser.ts<br/>• 19-field CSV validation<br/>• Trailing comma tolerance<br/>• (0,0) GPS rejection<br/>• Unit conversion (Pa → hPa)"]
         SIM_BUF --> PARSER
-        PARSER --> FILTER{"Source Isolation Gate\n(LIVE_SERIAL vs SIM)"}
+        PARSER --> FILTER{"Source Isolation Gate<br/>(LIVE_SERIAL vs SIM)"}
         FILTER --> STATE["React Telemetry State Store"]
     end
 
     subgraph Visualization["UI Workspaces & Viewports"]
-        STATE --> OVERVIEW["Mission Overview Panel\n• Baro / GNSS Alt\n• Descent Rate\n• Battery & Health"]
-        STATE --> THREE_D["ThreeAttitudeViewport.tsx\n• Three.js 6-DOF CanSat\n• Euler Angles (R/P/Y)"]
-        STATE --> CHARTS["TelemetryChartPanel.tsx\n• Sliding Window (10-120s)\n• Reset Detection Traces"]
-        STATE --> MAP["GpsTrackingMap.tsx\n• Live GPS Breadcrumbs\n• Target & GS Markers\n• Bounding Box Overlays"]
+        STATE --> OVERVIEW["Mission Overview Panel<br/>• Baro / GNSS Alt<br/>• Descent Rate<br/>• Battery & Health"]
+        STATE --> THREE_D["ThreeAttitudeViewport.tsx<br/>• Three.js 6-DOF CanSat<br/>• Euler Angles (R/P/Y)"]
+        STATE --> CHARTS["TelemetryChartPanel.tsx<br/>• Sliding Window (10-120s)<br/>• Reset Detection Traces"]
+        STATE --> MAP["GpsTrackingMap.tsx<br/>• Live GPS Breadcrumbs<br/>• Target & GS Markers<br/>• Bounding Box Overlays"]
     end
 
     subgraph Predictor["Precision Landing Engine"]
-        STATE --> COORD["PredictorRequestCoordinator.ts\n• Request Throttling\n• Exponential Backoff"]
-        COORD --> TS_ENG["landingPredictorClient.ts\n(Deterministic ENU Fallback)"]
-        COORD -.->|HTTP JSON (Local)| PY_ENG["predictor_service/\n(Python 3.10+ Physics Engine)"]
-        TS_ENG --> PRED_VIEW["LandingPredictorWorkspace.tsx\n• Touchdown Forecast\n• Drift Vector & Jitter RMSE"]
+        STATE --> COORD["PredictorRequestCoordinator.ts<br/>• Request Throttling<br/>• Exponential Backoff"]
+        COORD --> TS_ENG["landingPredictorClient.ts<br/>(Deterministic ENU Fallback)"]
+        COORD -.->|"HTTP JSON (Local)"| PY_ENG["predictor_service/<br/>(Python 3.10+ Physics Engine)"]
+        TS_ENG --> PRED_VIEW["LandingPredictorWorkspace.tsx<br/>• Touchdown Forecast<br/>• Drift Vector & Jitter RMSE"]
         PY_ENG -.-> PRED_VIEW
     end
 
     subgraph OfflineStorage["Offline Map Pipeline"]
-        MBTILES["SQLite MBTiles Databases\n(manipal, kushinagar, tamkuhi_raj)"] --> NODE_SRV["server/offlineServer.mjs\n(127.0.0.1:8080)"]
-        NODE_SRV --> IDB["IndexedDB Cache\n(cansat_offline_maps_v2)"]
+        MBTILES["SQLite MBTiles Databases<br/>(manipal, kushinagar, tamkuhi_raj)"] --> NODE_SRV["server/offlineServer.mjs<br/>(127.0.0.1:8080)"]
+        NODE_SRV --> IDB["IndexedDB Cache<br/>(cansat_offline_maps_v2)"]
         IDB --> MAP
         NODE_SRV --> MAP
     end
 
     subgraph Export["Competition Logging"]
-        STATE --> CSV_EXP["telemetryExport.ts\n• Flight_2026-IN-SPACe-CAN-7USAT-017.csv\n• 34 Canonical Columns"]
+        STATE --> CSV_EXP["telemetryExport.ts<br/>• Flight_2026-IN-SPACe-CAN-7USAT-017.csv<br/>• 34 Canonical Columns"]
     end
 ```
 
