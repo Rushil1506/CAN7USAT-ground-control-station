@@ -21,6 +21,7 @@ import {
   TelemetrySource,
 } from '../types';
 import { TEAM_INFO } from '../constants';
+import { OptionalTelemetrySettings } from '../services/optionalTelemetrySettings';
 
 interface HeaderBarProps {
   activeTab: ActiveTab;
@@ -37,6 +38,7 @@ interface HeaderBarProps {
   onToggleTerminal: () => void;
   isTerminalOpen: boolean;
   onResetSimulation: () => void;
+  optionalTelemetrySettings?: OptionalTelemetrySettings;
 }
 
 const IST_TIME_FORMATTER = new Intl.DateTimeFormat('en-GB', {
@@ -117,6 +119,7 @@ export const HeaderBar: React.FC<HeaderBarProps> = ({
   onToggleTerminal,
   isTerminalOpen,
   onResetSimulation,
+  optionalTelemetrySettings,
 }) => {
   const [istClock, setIstClock] = useState<{
     timeLabel: string;
@@ -135,30 +138,40 @@ export const HeaderBar: React.FC<HeaderBarProps> = ({
   const isSim = telemetrySource === 'SIMULATION';
   const teamBadge = resolveHeaderTeamBadge(latestPacket, telemetrySource);
 
-  const tabs: { id: ActiveTab; label: string; icon: React.ReactNode }[] = [
+  const tabs: {
+    id: ActiveTab;
+    label: string;
+    shortLabel: string;
+    icon: React.ReactNode;
+  }[] = [
     {
       id: 'OVERVIEW',
       label: 'Mission Overview',
+      shortLabel: 'Overview',
       icon: <LayoutDashboard className="w-4 h-4" />,
     },
     {
       id: 'LANDING_PREDICTOR',
       label: 'Landing Predictor',
+      shortLabel: 'Predictor',
       icon: <Crosshair className="w-4 h-4" />,
     },
     {
       id: 'TELEMETRY',
       label: 'Telemetry Explorer',
+      shortLabel: 'Telemetry',
       icon: <BarChart3 className="w-4 h-4" />,
     },
     {
       id: 'ATTITUDE_SENSORS',
       label: 'Attitude & Sensors',
+      shortLabel: 'Attitude',
       icon: <Compass className="w-4 h-4" />,
     },
     {
       id: 'COMMS_LOGS',
       label: 'Communications & Logs',
+      shortLabel: 'Comms & Logs',
       icon: <Radio className="w-4 h-4" />,
     },
   ];
@@ -174,24 +187,24 @@ export const HeaderBar: React.FC<HeaderBarProps> = ({
     Number.isFinite(latestPacket.batterySoc);
 
   return (
-    <header className="flex justify-between items-center px-4 h-14 w-full z-40 bg-[var(--bg-surface-1)] border-b border-[var(--border-subtle)] shadow-[var(--shadow-xs)] shrink-0 select-none">
+    <header className="flex justify-between items-center px-3 xl:px-4 h-14 w-full z-40 bg-[var(--bg-surface-1)] border-b border-[var(--border-subtle)] shadow-[var(--shadow-xs)] shrink-0 select-none overflow-hidden">
       {/* Left: Mission Identity & Five-Workspace Navigation */}
-      <div className="flex items-center gap-3 xl:gap-4 min-w-0">
-        <div className="flex items-center gap-3 shrink-0">
-          <div className="w-1.5 h-7 bg-[var(--accent-cobalt)] rounded-full hidden sm:block" />
+      <div className="flex items-center gap-2 xl:gap-3 2xl:gap-4 min-w-0 shrink">
+        <div className="flex items-center gap-2.5 xl:gap-3 shrink-0">
+          <div className="w-1.5 h-7 bg-[var(--accent-cobalt)] rounded-full hidden sm:block shrink-0" />
           <div>
-            <div className="flex items-center gap-2">
-              <h1 className="text-sm font-bold text-[var(--text-primary)] tracking-tight">
+            <div className="flex items-center gap-1.5 xl:gap-2">
+              <h1 className="text-sm font-bold text-[var(--text-primary)] tracking-tight whitespace-nowrap shrink-0">
                 CAN-7USAT Operations
               </h1>
               <span
-                className="bg-[var(--accent-cobalt-soft)] text-[var(--accent-cobalt)] border border-[var(--accent-cobalt)]/20 text-[11px] font-mono-data font-semibold px-1.5 py-0.5 rounded-[var(--radius-xs)]"
+                className="bg-[var(--accent-cobalt-soft)] text-[var(--accent-cobalt)] border border-[var(--accent-cobalt)]/20 text-[11px] font-mono-data font-semibold px-1.5 py-0.5 rounded-[var(--radius-xs)] shrink-0 whitespace-nowrap"
                 data-testid="team-badge"
               >
                 {teamBadge.label}
               </span>
               <span
-                className={`hidden sm:inline-block text-[9px] font-mono-data font-bold px-1.5 py-0.5 border rounded-[var(--radius-xs)] uppercase ${
+                className={`hidden xl:inline-block text-[9px] font-mono-data font-bold px-1.5 py-0.5 border rounded-[var(--radius-xs)] uppercase shrink-0 whitespace-nowrap ${
                   teamBadge.status === 'MISMATCH'
                     ? 'bg-[var(--status-alert-bg)] text-[var(--status-alert)] border-[var(--status-alert)]/40'
                     : teamBadge.status === 'VERIFIED'
@@ -227,7 +240,7 @@ export const HeaderBar: React.FC<HeaderBarProps> = ({
         {/* Five-Workspace Primary Navigation Bar */}
         <nav
           aria-label="Primary Mission Workspaces"
-          className="hidden lg:flex items-center gap-1 ml-1 xl:ml-2 bg-[var(--bg-surface-2)] p-1 rounded-[var(--radius-md)] border border-[var(--border-subtle)] shrink-0"
+          className="hidden lg:flex items-center gap-0.5 xl:gap-1 bg-[var(--bg-surface-2)] p-1 rounded-[var(--radius-md)] border border-[var(--border-subtle)] shrink min-w-0 max-w-full overflow-x-auto [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"
         >
           {tabs.map((tab) => {
             const isActive = activeTab === tab.id;
@@ -236,26 +249,28 @@ export const HeaderBar: React.FC<HeaderBarProps> = ({
                 key={tab.id}
                 type="button"
                 onClick={() => setActiveTab(tab.id)}
-                className={`px-2 xl:px-3 py-1.5 text-xs font-medium transition-all flex items-center gap-1.5 rounded-[var(--radius-sm)] cursor-pointer whitespace-nowrap ${
+                title={tab.label}
+                className={`px-2 xl:px-2.5 2xl:px-3 py-1.5 text-xs font-medium transition-all flex items-center gap-1.5 rounded-[var(--radius-sm)] cursor-pointer whitespace-nowrap shrink-0 ${
                   isActive
                     ? 'bg-[var(--bg-surface-1)] text-[var(--accent-cobalt)] font-semibold shadow-[var(--shadow-xs)] border border-[var(--border-subtle)]'
                     : 'text-[var(--text-secondary)] border border-transparent hover:text-[var(--text-primary)] hover:bg-[var(--bg-surface-elevated)]'
                 }`}
               >
-                {tab.icon}
-                <span>{tab.label}</span>
+                <span className="shrink-0">{tab.icon}</span>
+                <span className="hidden 2xl:inline whitespace-nowrap">{tab.label}</span>
+                <span className="inline 2xl:hidden whitespace-nowrap">{tab.shortLabel}</span>
               </button>
             );
           })}
         </nav>
 
         {/* Responsive Workspace Selector (< lg) */}
-        <div className="flex lg:hidden items-center ml-1">
+        <div className="flex lg:hidden items-center ml-1 shrink-0">
           <select
             value={activeTab}
             onChange={(e) => setActiveTab(e.target.value as ActiveTab)}
             aria-label="Navigation Workspace Switcher"
-            className="bg-[var(--bg-surface-2)] border border-[var(--border-subtle)] text-[var(--text-primary)] text-xs font-medium px-2.5 py-1.5 rounded-[var(--radius-sm)] focus:border-[var(--accent-cobalt)] outline-none cursor-pointer"
+            className="bg-[var(--bg-surface-2)] border border-[var(--border-subtle)] text-[var(--text-primary)] text-xs font-medium px-2 py-1.5 rounded-[var(--radius-sm)] focus:border-[var(--accent-cobalt)] outline-none cursor-pointer whitespace-nowrap shrink-0"
           >
             {tabs.map((tab) => (
               <option key={tab.id} value={tab.id}>
@@ -267,55 +282,56 @@ export const HeaderBar: React.FC<HeaderBarProps> = ({
       </div>
 
       {/* Right: Data Source Switcher, Telemetry Freshness, Clocks & Actions */}
-      <div className="flex items-center gap-2 sm:gap-2.5">
+      <div className="flex items-center gap-1.5 xl:gap-2 shrink-0">
         {/* Source Mode Selector Pill (Strict Isolation between SIMULATION and LIVE_SERIAL) */}
         <div
           role="group"
           aria-label="Telemetry Data Source"
-          className="flex items-center bg-[var(--bg-surface-2)] border border-[var(--border-subtle)] p-0.5 rounded-[var(--radius-sm)] text-[11px] font-medium"
+          className="flex items-center bg-[var(--bg-surface-2)] border border-[var(--border-subtle)] p-0.5 rounded-[var(--radius-sm)] text-[11px] font-medium shrink-0 whitespace-nowrap"
         >
           <button
             type="button"
             onClick={() => onSelectSource('SIMULATION')}
             title="Switch to Isolated In-Browser 10Hz Flight Simulator"
-            className={`px-2.5 py-1 rounded-[var(--radius-xs)] flex items-center gap-1.5 cursor-pointer transition-colors ${
+            className={`px-2 xl:px-2.5 py-1 rounded-[var(--radius-xs)] flex items-center gap-1.5 cursor-pointer transition-colors shrink-0 whitespace-nowrap ${
               isSim
                 ? 'bg-[var(--bg-surface-1)] text-[var(--accent-cobalt)] font-semibold shadow-[var(--shadow-xs)]'
                 : 'text-[var(--text-tertiary)] hover:text-[var(--text-primary)]'
             }`}
           >
-            <Cpu className="w-3.5 h-3.5" />
-            <span className="hidden sm:inline">Simulator</span>
+            <Cpu className="w-3.5 h-3.5 shrink-0" />
+            <span className="hidden sm:inline whitespace-nowrap">Simulator</span>
           </button>
           <button
             type="button"
             onClick={() => onSelectSource('LIVE_SERIAL')}
             title="Switch to Live USB-Serial Receiver (115200 8N1, Receive-Only)"
-            className={`px-2.5 py-1 rounded-[var(--radius-xs)] flex items-center gap-1.5 cursor-pointer transition-colors ${
+            className={`px-2 xl:px-2.5 py-1 rounded-[var(--radius-xs)] flex items-center gap-1.5 cursor-pointer transition-colors shrink-0 whitespace-nowrap ${
               !isSim
                 ? 'bg-[var(--accent-teal)] text-white font-semibold shadow-[var(--shadow-xs)]'
                 : 'text-[var(--text-tertiary)] hover:text-[var(--text-primary)]'
             }`}
           >
-            <Usb className="w-3.5 h-3.5" />
-            <span className="hidden sm:inline">Live USB Serial</span>
+            <Usb className="w-3.5 h-3.5 shrink-0" />
+            <span className="hidden xl:inline whitespace-nowrap">Live USB Serial</span>
+            <span className="hidden sm:inline xl:hidden whitespace-nowrap">Live Serial</span>
           </button>
         </div>
 
         {/* Link Health & Freshness Status Badge */}
         {isSim ? (
           <div
-            className="hidden xl:flex items-center gap-1.5 px-2.5 py-1 bg-[var(--status-info-bg)] border border-[var(--accent-cobalt)]/20 text-[11px] font-mono-data text-[var(--accent-cobalt)] rounded-[var(--radius-sm)]"
+            className="hidden xl:flex items-center gap-1.5 px-2 xl:px-2.5 py-1 bg-[var(--status-info-bg)] border border-[var(--accent-cobalt)]/20 text-[11px] font-mono-data text-[var(--accent-cobalt)] rounded-[var(--radius-sm)] shrink-0 whitespace-nowrap"
             title="Telemetry Source: Local 10Hz Physics Simulator (Isolated from Live Hardware)"
           >
-            <span className="w-2 h-2 rounded-full bg-[var(--accent-cobalt)]" />
-            <span className="font-semibold">SIMULATED</span>
+            <span className="w-2 h-2 rounded-full bg-[var(--accent-cobalt)] shrink-0" />
+            <span className="font-semibold whitespace-nowrap">SIMULATED</span>
             <span className="opacity-60">•</span>
-            <span className="tabular-nums">10 Hz</span>
+            <span className="tabular-nums whitespace-nowrap">10 Hz</span>
           </div>
         ) : (
           <div
-            className={`hidden md:flex items-center gap-1.5 px-2.5 py-1 border text-[11px] font-mono-data rounded-[var(--radius-sm)] ${
+            className={`hidden sm:flex items-center gap-1.5 px-2 xl:px-2.5 py-1 border text-[11px] font-mono-data rounded-[var(--radius-sm)] shrink-0 whitespace-nowrap ${
               serialState === 'CONNECTED' && !isStale && latestPacket
                 ? 'bg-[var(--status-nominal-bg)] text-[var(--status-nominal)] border-[var(--status-nominal)]/30'
                 : isStale
@@ -324,8 +340,8 @@ export const HeaderBar: React.FC<HeaderBarProps> = ({
             }`}
             title={`Live USB Serial @ ${liveBaudRate} baud | Valid: ${serialMetrics.validPacketsReceived} | Malformed: ${serialMetrics.malformedPacketsReceived}`}
           >
-            <Radio className="w-3.5 h-3.5" />
-            <span className="font-semibold">
+            <Radio className="w-3.5 h-3.5 shrink-0" />
+            <span className="font-semibold whitespace-nowrap">
               {serialState !== 'CONNECTED'
                 ? `USB ${serialState}`
                 : !latestPacket
@@ -339,27 +355,31 @@ export const HeaderBar: React.FC<HeaderBarProps> = ({
 
         {/* Packet Counter Badge */}
         <div
-          className="hidden md:flex items-center gap-1.5 px-2.5 py-1 bg-[var(--bg-surface-2)] border border-[var(--border-subtle)] text-[11px] font-mono-data text-[var(--text-secondary)] rounded-[var(--radius-sm)]"
+          className="hidden xl:flex items-center gap-1.5 px-2 xl:px-2.5 py-1 bg-[var(--bg-surface-2)] border border-[var(--border-subtle)] text-[11px] font-mono-data text-[var(--text-secondary)] rounded-[var(--radius-sm)] shrink-0 whitespace-nowrap"
           title={
             isSim
               ? 'Simulated Packet Sequence Number'
               : `Received Packet Sequence # | Valid Frames: ${serialMetrics.validPacketsReceived} | Malformed: ${serialMetrics.malformedPacketsReceived}`
           }
         >
-          <Activity className="w-3.5 h-3.5 text-[var(--accent-teal)]" />
-          <span>PKT</span>
-          <span className="text-[var(--text-primary)] font-semibold tabular-nums">
+          <Activity className="w-3.5 h-3.5 text-[var(--accent-teal)] shrink-0" />
+          <span className="whitespace-nowrap">PKT</span>
+          <span className="text-[var(--text-primary)] font-semibold tabular-nums whitespace-nowrap">
             {latestPacket ? `#${latestPacket.packetNumber}` : 'NONE'}
           </span>
         </div>
 
         {/* Battery Monitor Badge */}
-        <div className="hidden 2xl:flex items-center gap-1.5 bg-[var(--bg-surface-2)] border border-[var(--border-subtle)] px-2.5 py-1 text-[11px] font-mono-data rounded-[var(--radius-sm)]">
-          <span className="text-[var(--text-secondary)]">BATT</span>
-          {hasValidBatt ? (
+        <div className="hidden 2xl:flex items-center gap-1.5 bg-[var(--bg-surface-2)] border border-[var(--border-subtle)] px-2.5 py-1 text-[11px] font-mono-data rounded-[var(--radius-sm)] shrink-0 whitespace-nowrap">
+          <span className="text-[var(--text-secondary)] whitespace-nowrap">BATT</span>
+          {optionalTelemetrySettings && !optionalTelemetrySettings.enableBatteryVoltage ? (
+            <span className="text-[var(--text-tertiary)] font-mono text-[10px] whitespace-nowrap" title="Battery voltage monitoring disabled in Settings">
+              DISABLED
+            </span>
+          ) : hasValidBatt ? (
             <>
               <span
-                className={`font-semibold tabular-nums ${
+                className={`font-semibold tabular-nums whitespace-nowrap ${
                   latestPacket!.batteryVoltage! >= 6.4
                     ? 'text-[var(--status-nominal)]'
                     : 'text-[var(--status-warning)]'
@@ -368,20 +388,20 @@ export const HeaderBar: React.FC<HeaderBarProps> = ({
                 {latestPacket!.batteryVoltage!.toFixed(2)}V
               </span>
               {hasValidSoc && (
-                <span className="text-[var(--text-tertiary)] tabular-nums">
+                <span className="text-[var(--text-tertiary)] tabular-nums whitespace-nowrap">
                   ({latestPacket!.batterySoc!.toFixed(0)}%)
                 </span>
               )}
             </>
           ) : (
-            <span className="text-[var(--text-tertiary)] tabular-nums">N/A</span>
+            <span className="text-[var(--text-tertiary)] tabular-nums whitespace-nowrap">UNAVAILABLE</span>
           )}
         </div>
 
         {/* Ground Station Computer Clock (IST / Asia/Kolkata) */}
         <div
           title={istClock.fullDateTimeTitle}
-          className="font-mono-data text-xs text-[var(--text-primary)] font-medium px-2.5 border-l border-[var(--border-subtle)] hidden sm:block tabular-nums"
+          className="font-mono-data text-xs text-[var(--text-primary)] font-medium px-2 xl:px-2.5 border-l border-[var(--border-subtle)] hidden md:block tabular-nums shrink-0 whitespace-nowrap"
         >
           {istClock.timeLabel}
         </div>
@@ -392,7 +412,7 @@ export const HeaderBar: React.FC<HeaderBarProps> = ({
             type="button"
             onClick={onResetSimulation}
             title="Reset Telemetry Simulator to T=0.0s"
-            className="p-1.5 text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-surface-2)] transition-colors cursor-pointer border border-[var(--border-subtle)] rounded-[var(--radius-sm)]"
+            className="p-1.5 text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-surface-2)] transition-colors cursor-pointer border border-[var(--border-subtle)] rounded-[var(--radius-sm)] shrink-0"
           >
             <RefreshCw className="w-4 h-4" />
           </button>
@@ -401,11 +421,11 @@ export const HeaderBar: React.FC<HeaderBarProps> = ({
         {/* Live Serial: static receive-only indicator (informational, not a control) */}
         {!isSim && (
           <span
-            className="hidden sm:flex items-center gap-1.5 text-[11px] font-semibold px-2.5 py-1 bg-[var(--bg-surface-2)] text-[var(--text-secondary)] border border-[var(--border-subtle)] rounded-[var(--radius-sm)]"
+            className="hidden 2xl:flex items-center gap-1.5 text-[11px] font-semibold px-2 xl:px-2.5 py-1 bg-[var(--bg-surface-2)] text-[var(--text-secondary)] border border-[var(--border-subtle)] rounded-[var(--radius-sm)] shrink-0 whitespace-nowrap"
             title="Live Serial is strictly receive-only: no hardware telecommands are sent"
           >
-            <Rocket className="w-3.5 h-3.5" />
-            RX ONLY
+            <Rocket className="w-3.5 h-3.5 shrink-0" />
+            <span className="whitespace-nowrap">RX ONLY</span>
           </span>
         )}
         {/* Raw Frame Drawer Toggle */}
@@ -413,7 +433,7 @@ export const HeaderBar: React.FC<HeaderBarProps> = ({
           type="button"
           onClick={onToggleTerminal}
           title="Toggle Raw Stream & Frame Inspector Drawer"
-          className={`p-1.5 transition-colors cursor-pointer border rounded-[var(--radius-sm)] ${
+          className={`p-1.5 transition-colors cursor-pointer border rounded-[var(--radius-sm)] shrink-0 ${
             isTerminalOpen
               ? 'text-[var(--accent-cobalt)] bg-[var(--accent-cobalt-soft)] border-[var(--accent-cobalt)]/40'
               : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-surface-2)] border-[var(--border-subtle)]'
@@ -427,7 +447,7 @@ export const HeaderBar: React.FC<HeaderBarProps> = ({
           type="button"
           onClick={onOpenSettingsModal}
           title="Ground Station & Vehicle Settings"
-          className="p-1.5 text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-surface-2)] transition-colors cursor-pointer border border-[var(--border-subtle)] rounded-[var(--radius-sm)]"
+          className="p-1.5 text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-surface-2)] transition-colors cursor-pointer border border-[var(--border-subtle)] rounded-[var(--radius-sm)] shrink-0"
         >
           <Settings className="w-4 h-4" />
         </button>

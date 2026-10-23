@@ -1,7 +1,8 @@
 {
-  "name": "react-example",
+  "name": "can7usat-ground-control-station",
   "private": true,
-  "version": "0.0.0",
+  "version": "1.0.0",
+  "description": "Avionics ground control station for the CAN-7USAT student competition with real-time 6-DOF telemetry, 3D attitude viewport, ENU precision landing prediction, and offline MBTiles mapping.",
   "type": "module",
   "scripts": {
     "dev": "vite --port=3000 --host=0.0.0.0",
@@ -9,7 +10,7 @@
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit",
-    "test": "node --import tsx --test src/services/__tests__/telemetryParser.test.ts src/services/__tests__/landingPredictorClient.test.ts src/services/__tests__/gcsAuditRegressions.test.ts"
+    "test": "node --import tsx --test src/services/__tests__/telemetryParser.test.ts src/services/__tests__/landingPredictorClient.test.ts src/services/__tests__/gcsAuditRegressions.test.ts src/services/__tests__/offlineMapPacks.test.ts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",

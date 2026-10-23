@@ -5,12 +5,52 @@ import {
   CheckCircle2,
   ClipboardCheck,
   Cpu,
+  HardDrive,
+  MapPin,
   Radio,
   Rocket,
   ShieldCheck,
   Volume2,
 } from 'lucide-react';
 import { TelemetryPacket, TelemetrySource } from '../types';
+
+export interface FieldReadinessCheck {
+  id: string;
+  title: string;
+  requirement: string;
+  sectionRef: string;
+}
+
+export const FIELD_READINESS_ITEMS: FieldReadinessCheck[] = [
+  {
+    id: 'antenna_elevation',
+    title: 'Elevated Ground Station Antenna (Tripod Mount)',
+    requirement:
+      'LoRa/XBee antenna mounted on elevated tripod (>= 1.5-2.0m AGL) with clear line-of-sight to launch rail and recovery sector for Fresnel zone clearance.',
+    sectionRef: 'IN-SPACe Section 6.1.iii',
+  },
+  {
+    id: 'laptop_battery',
+    title: 'Field Laptop Battery Endurance (>= 2 Hours)',
+    requirement:
+      'Primary ground station laptop verified for >= 2.0 hours autonomous battery operation under active serial streaming and map rendering.',
+    sectionRef: 'IN-SPACe Section 6.1.xi',
+  },
+  {
+    id: 'offline_maps',
+    title: 'Autonomous Offline Map Packs Verified',
+    requirement:
+      'Kushinagar and Tamkuhi Raj regional map packs verified in browser IndexedDB & local MBTiles server with zero internet reliance.',
+    sectionRef: 'IN-SPACe Section 6.1.xii',
+  },
+  {
+    id: 'portable_station',
+    title: 'Portable Relocation Readiness for CanSat Recovery',
+    requirement:
+      'Ground station portable and ready to move along flight line or into field vehicle for distant touchdown recovery without losing session logs.',
+    sectionRef: 'IN-SPACe Section 6.1.xii',
+  },
+];
 
 interface PreflightChecklistPanelProps {
   latestPacket: TelemetryPacket | null;
@@ -225,6 +265,12 @@ export const PreflightChecklistPanel: React.FC<PreflightChecklistPanelProps> = (
   const [liveCheckedItems, setLiveCheckedItems] = useState<Record<number, boolean>>(
     () => getDefaultChecklistState('LIVE_SERIAL')
   );
+  const [fieldChecks, setFieldChecks] = useState<Record<string, boolean>>({
+    antenna_elevation: false,
+    laptop_battery: false,
+    offline_maps: true,
+    portable_station: true,
+  });
 
   const activeCheckedItems = isSim ? simCheckedItems : liveCheckedItems;
 
@@ -335,6 +381,53 @@ export const PreflightChecklistPanel: React.FC<PreflightChecklistPanelProps> = (
             </div>
           );
         })}
+      </div>
+
+      {/* Ground Station Physical Deployment & Relocation Checklist (Section 6.1.iii, xi, xii) */}
+      <div className="bg-[var(--bg-surface-2)] border border-[var(--border-subtle)] rounded-[var(--radius-sm)] p-2.5 flex flex-col gap-2">
+        <div className="flex items-center justify-between border-b border-[var(--border-subtle)] pb-1.5">
+          <div className="flex items-center gap-1.5 text-xs font-bold text-[var(--text-primary)] uppercase tracking-wider">
+            <Radio className="w-3.5 h-3.5 text-[var(--action-amber)]" />
+            <span>Ground Station Field Equipment &amp; Antenna Checklist</span>
+          </div>
+          <span className="font-mono-data text-[9px] px-1.5 py-0.5 rounded-[var(--radius-xs)] bg-[var(--bg-surface-1)] text-[var(--action-amber)] border border-[var(--border-amber)]/40 font-semibold uppercase">
+            Section 6.1 (iii, xi, xii)
+          </span>
+        </div>
+
+        <div className="grid grid-cols-1 gap-1.5">
+          {FIELD_READINESS_ITEMS.map((item) => {
+            const isChecked = Boolean(fieldChecks[item.id]);
+            return (
+              <label
+                key={item.id}
+                className="flex items-start gap-2 p-1.5 rounded-[var(--radius-xs)] hover:bg-[var(--bg-surface-3)]/60 cursor-pointer transition-colors"
+              >
+                <input
+                  type="checkbox"
+                  checked={isChecked}
+                  onChange={() =>
+                    setFieldChecks((prev) => ({ ...prev, [item.id]: !prev[item.id] }))
+                  }
+                  className="w-3.5 h-3.5 accent-[var(--action-amber)] cursor-pointer mt-0.5 shrink-0"
+                />
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center justify-between gap-1">
+                    <span className="text-[11px] font-semibold text-[var(--text-primary)]">
+                      {item.title}
+                    </span>
+                    <span className="text-[9px] font-mono-data text-[var(--text-tertiary)] shrink-0">
+                      {item.sectionRef}
+                    </span>
+                  </div>
+                  <p className="text-[10px] text-[var(--text-secondary)] leading-tight mt-0.5">
+                    {item.requirement}
+                  </p>
+                </div>
+              </label>
+            );
+          })}
+        </div>
       </div>
 
       {/* Simulated launch trigger: only rendered in Simulation mode (nothing in Live Serial) */}

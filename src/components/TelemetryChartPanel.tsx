@@ -15,8 +15,17 @@ import {
 } from 'lucide-react';
 import { FLIGHT_STATES } from '../constants';
 import { resolvePacketTimestampSeconds } from '../services/landingPredictorClient';
-import { exportTelemetryPacketsToCsv } from '../services/telemetryExport';
+import { exportTelemetryPacketsToCsv, exportOfficialFlightCsv } from '../services/telemetryExport';
 import { FlightStateCode, TelemetryPacket, TelemetrySource } from '../types';
+import { OptionalTelemetrySettings } from '../services/optionalTelemetrySettings';
+
+export type ChartPresetId =
+  | 'PRIMARY'
+  | 'BARO_IMU'
+  | 'ACCEL_3AXIS'
+  | 'GNSS_LINK'
+  | 'STABILIZATION'
+  | 'ENVIRONMENTAL';
 
 export interface TelemetryChartPanelProps {
   history: TelemetryPacket[];
@@ -25,7 +34,8 @@ export interface TelemetryChartPanelProps {
   isStale?: boolean;
   expandedMode?: boolean;
   overviewMode?: boolean;
-  initialPreset?: 'PRIMARY' | 'BARO_IMU' | 'STABILIZATION' | 'ENVIRONMENTAL';
+  initialPreset?: ChartPresetId;
+  optionalTelemetrySettings?: OptionalTelemetrySettings;
 }
 
 export interface SingleGraphProps {
@@ -40,6 +50,7 @@ export interface SingleGraphProps {
   thresholdValue?: number;
   thresholdLabel?: string;
   telemetrySource?: TelemetrySource;
+  isDisabled?: boolean;
 }
 
 export interface SegmentDataPoint {
@@ -283,6 +294,7 @@ export const SingleGraph: React.FC<SingleGraphProps> = ({
   thresholdValue,
   thresholdLabel,
   telemetrySource = 'SIMULATION',
+  isDisabled = false,
 }) => {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -649,7 +661,11 @@ export const SingleGraph: React.FC<SingleGraphProps> = ({
 
       {/* Numerical Telemetry Readout with Tabular Numerals */}
       <div className="flex items-baseline justify-between my-1">
-        {hasCurrent ? (
+        {isDisabled ? (
+          <div className="font-mono-data text-xs sm:text-sm font-semibold tracking-tight text-slate-400 bg-slate-800/60 border border-slate-700/60 px-2 py-0.5 rounded-[var(--radius-xs)] uppercase">
+            DISABLED
+          </div>
+        ) : hasCurrent ? (
           <div
             className="font-mono-data text-2xl sm:text-3xl font-bold tracking-tight tabular-nums"
             style={{ color }}
@@ -668,19 +684,19 @@ export const SingleGraph: React.FC<SingleGraphProps> = ({
           <div>
             <span className="block text-[9px] uppercase">MIN</span>
             <span className="text-[var(--text-secondary)] font-semibold">
-              {minVal !== null ? minVal.toFixed(1) : '--'}
+              {!isDisabled && minVal !== null ? minVal.toFixed(1) : '--'}
             </span>
           </div>
           <div>
             <span className="block text-[9px] uppercase">AVG</span>
             <span className="text-[var(--text-secondary)] font-semibold">
-              {avgVal !== null ? avgVal.toFixed(1) : '--'}
+              {!isDisabled && avgVal !== null ? avgVal.toFixed(1) : '--'}
             </span>
           </div>
           <div>
             <span className="block text-[9px] uppercase">MAX</span>
             <span className="text-[var(--text-secondary)] font-semibold">
-              {maxVal !== null ? maxVal.toFixed(1) : '--'}
+              {!isDisabled && maxVal !== null ? maxVal.toFixed(1) : '--'}
             </span>
           </div>
         </div>
@@ -698,7 +714,16 @@ export const SingleGraph: React.FC<SingleGraphProps> = ({
           className="w-full h-full cursor-crosshair block"
         />
 
-        {samplesInWindow.length === 0 && (
+        {isDisabled ? (
+          <div className="absolute inset-0 bg-[var(--bg-surface-1)]/90 backdrop-blur-xs flex flex-col items-center justify-center p-3 text-center z-10 pointer-events-none">
+            <span className="px-2 py-0.5 rounded text-[10px] font-mono-data font-semibold bg-slate-800 text-slate-300 border border-slate-700 uppercase">
+              SENSOR DISABLED IN SETTINGS
+            </span>
+            <span className="text-[10px] text-[var(--text-tertiary)] mt-1.5 max-w-[220px] leading-tight">
+              Telemetry acquisition for this channel is disabled by operator preference.
+            </span>
+          </div>
+        ) : samplesInWindow.length === 0 ? (
           <div className="absolute inset-0 flex items-center justify-center pointer-events-none px-2 text-center">
             <span className="font-mono-data text-[11px] text-[var(--text-tertiary)]">
               {history.length === 0
@@ -706,7 +731,7 @@ export const SingleGraph: React.FC<SingleGraphProps> = ({
                 : 'Channel not transmitted in active telemetry stream'}
             </span>
           </div>
-        )}
+        ) : null}
 
         {/* Hover Crosshair Overlay */}
         {hoverData && (
@@ -730,20 +755,33 @@ export const SingleGraph: React.FC<SingleGraphProps> = ({
   );
 };
 
-export function getChartPresetTabs(overviewMode?: boolean) {
-  return overviewMode
-    ? ([
-        { id: 'PRIMARY', label: 'Primary (Alt/Rate)' },
-        { id: 'BARO_IMU', label: 'Baro & Temp' },
-        { id: 'STABILIZATION', label: 'DCS & Power' },
-        { id: 'ENVIRONMENTAL', label: 'Payload' },
-      ] as const)
-    : ([
-        { id: 'PRIMARY', label: 'Primary Flight Metrics' },
-        { id: 'BARO_IMU', label: 'Barometric & IMU' },
-        { id: 'STABILIZATION', label: 'DCS & Electrical Power' },
-        { id: 'ENVIRONMENTAL', label: 'Environmental Payload' },
-      ] as const);
+export function getChartPresetTabs(overviewMode?: boolean, expandedMode?: boolean) {
+  if (overviewMode) {
+    return [
+      { id: 'PRIMARY', label: 'Primary (Alt/Rate)' },
+      { id: 'BARO_IMU', label: 'Baro & Temp' },
+      { id: 'STABILIZATION', label: 'DCS & Power' },
+      { id: 'ENVIRONMENTAL', label: 'Payload' },
+    ] as const;
+  }
+
+  if (expandedMode) {
+    return [
+      { id: 'PRIMARY', label: 'Primary Flight Metrics' },
+      { id: 'BARO_IMU', label: 'Barometric & IMU' },
+      { id: 'ACCEL_3AXIS', label: '3-Axis Accelerometer' },
+      { id: 'GNSS_LINK', label: 'GNSS & Link Metrics' },
+      { id: 'STABILIZATION', label: 'DCS & Electrical Power' },
+      { id: 'ENVIRONMENTAL', label: 'Environmental Payload' },
+    ] as const;
+  }
+
+  return [
+    { id: 'PRIMARY', label: 'Primary Flight Metrics' },
+    { id: 'BARO_IMU', label: 'Barometric & IMU' },
+    { id: 'STABILIZATION', label: 'DCS & Electrical Power' },
+    { id: 'ENVIRONMENTAL', label: 'Environmental Payload' },
+  ] as const;
 }
 
 export function getChartGridClass(overviewMode?: boolean) {
@@ -760,15 +798,14 @@ export const TelemetryChartPanel: React.FC<TelemetryChartPanelProps> = ({
   expandedMode = false,
   overviewMode = false,
   initialPreset = 'PRIMARY',
+  optionalTelemetrySettings,
 }) => {
   const [timeframe, setTimeframe] = useState<number>(30);
-  const [activePreset, setActivePrimaryPreset] = useState<
-    'PRIMARY' | 'BARO_IMU' | 'STABILIZATION' | 'ENVIRONMENTAL'
-  >(initialPreset);
+  const [activePreset, setActivePrimaryPreset] = useState<ChartPresetId>(initialPreset);
 
   const isSim = telemetrySource === 'SIMULATION';
 
-  const presetTabs = getChartPresetTabs(overviewMode);
+  const presetTabs = getChartPresetTabs(overviewMode, expandedMode);
   const gridClass = getChartGridClass(overviewMode);
 
   return (
@@ -803,16 +840,29 @@ export const TelemetryChartPanel: React.FC<TelemetryChartPanelProps> = ({
         {/* Source, Timeframe Duration Selector & Export Controls */}
         <div className="flex items-center gap-2 font-mono-data text-[11px] flex-wrap">
           {expandedMode && (
-            <button
-              type="button"
-              onClick={() => exportTelemetryPacketsToCsv(history, telemetrySource)}
-              disabled={history.length === 0}
-              title="Export complete telemetry packet history to standard 34-column CSV"
-              className="px-2.5 py-1 bg-[var(--accent-cobalt-soft)] hover:bg-[var(--accent-cobalt)] hover:text-white text-[var(--accent-cobalt)] border border-[var(--accent-cobalt)]/30 rounded-[var(--radius-sm)] font-semibold text-[11px] cursor-pointer flex items-center gap-1 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-            >
-              <Download className="w-3.5 h-3.5" />
-              <span>Export CSV ({history.length})</span>
-            </button>
+            <div className="flex items-center gap-1.5">
+              <button
+                type="button"
+                onClick={() => exportTelemetryPacketsToCsv(history, telemetrySource)}
+                disabled={history.length === 0}
+                title="Export complete telemetry packet history to standard timestamped 34-column CSV"
+                className="px-2 py-1 bg-[var(--accent-cobalt-soft)] hover:bg-[var(--accent-cobalt)] hover:text-white text-[var(--accent-cobalt)] border border-[var(--accent-cobalt)]/30 rounded-[var(--radius-sm)] font-semibold text-[11px] cursor-pointer flex items-center gap-1 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                <Download className="w-3.5 h-3.5" />
+                <span>Export CSV ({history.length})</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => exportOfficialFlightCsv(history, telemetrySource)}
+                disabled={history.length === 0}
+                title="Export official IN-SPACe competition submission CSV (Flight_2026-IN-SPACe-CAN-7USAT-017.csv) as required by Section 6.3.iii.A"
+                className="px-2 py-1 bg-[var(--status-nominal-bg)] hover:bg-[var(--status-nominal)] hover:text-white text-[var(--status-nominal)] border border-[var(--status-nominal)]/40 rounded-[var(--radius-sm)] font-semibold text-[11px] cursor-pointer flex items-center gap-1 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                <Download className="w-3.5 h-3.5" />
+                <span>Official Flight CSV</span>
+              </button>
+            </div>
           )}
 
           <span
@@ -1048,6 +1098,127 @@ export const TelemetryChartPanel: React.FC<TelemetryChartPanelProps> = ({
         </div>
       )}
 
+      {activePreset === 'ACCEL_3AXIS' && (
+        <div className={gridClass}>
+          <SingleGraph
+            title="IMU X-Axis Acceleration"
+            unit="m/s²"
+            currentValue={latestPacket?.accelX}
+            dataKey="accelX"
+            color="#0284c7"
+            icon={<Activity className="w-4 h-4 text-[#0284c7]" />}
+            history={history}
+            timeframeSeconds={timeframe}
+            telemetrySource={telemetrySource}
+          />
+
+          <SingleGraph
+            title="IMU Y-Axis Acceleration"
+            unit="m/s²"
+            currentValue={latestPacket?.accelY}
+            dataKey="accelY"
+            color="#0f766e"
+            icon={<Activity className="w-4 h-4 text-[#0f766e]" />}
+            history={history}
+            timeframeSeconds={timeframe}
+            telemetrySource={telemetrySource}
+          />
+
+          {!overviewMode && (
+            <>
+              <SingleGraph
+                title="IMU Z-Axis Acceleration"
+                unit="m/s²"
+                currentValue={latestPacket?.accelZ}
+                dataKey="accelZ"
+                color="#4338ca"
+                icon={<Activity className="w-4 h-4 text-[#4338ca]" />}
+                history={history}
+                timeframeSeconds={timeframe}
+                thresholdValue={9.81}
+                thresholdLabel="1G: 9.81 m/s²"
+                telemetrySource={telemetrySource}
+              />
+
+              <SingleGraph
+                title="Gyro Spin / Precession Rate"
+                unit="deg/s"
+                currentValue={latestPacket?.spinRate}
+                dataKey="spinRate"
+                color="#b45309"
+                icon={<RotateCw className="w-4 h-4 text-[#b45309]" />}
+                history={history}
+                timeframeSeconds={timeframe}
+                thresholdValue={3.18}
+                thresholdLabel="REF: 3.18°/s"
+                telemetrySource={telemetrySource}
+              />
+            </>
+          )}
+        </div>
+      )}
+
+      {activePreset === 'GNSS_LINK' && (
+        <div className={gridClass}>
+          <SingleGraph
+            title="GNSS Altitude (AMSL)"
+            unit="m"
+            currentValue={latestPacket?.gpsAltitude}
+            dataKey="gpsAltitude"
+            color="#1d4ed8"
+            icon={<PlaneTakeoff className="w-4 h-4 text-[#1d4ed8]" />}
+            history={history}
+            timeframeSeconds={timeframe}
+            telemetrySource={telemetrySource}
+          />
+
+          <SingleGraph
+            title="GNSS Satellites Locked"
+            unit="Sats"
+            currentValue={latestPacket?.gpsSats}
+            dataKey="gpsSats"
+            color="#0f766e"
+            icon={<Compass className="w-4 h-4 text-[#0f766e]" />}
+            history={history}
+            timeframeSeconds={timeframe}
+            thresholdValue={4}
+            thresholdLabel="MIN 3D: 4 SATS"
+            telemetrySource={telemetrySource}
+          />
+
+          {!overviewMode && (
+            <>
+              <SingleGraph
+                title="Telemetry Packet Sequence #"
+                unit="pkts"
+                currentValue={latestPacket?.packetNumber}
+                dataKey="packetNumber"
+                color="#b45309"
+                icon={<Activity className="w-4 h-4 text-[#b45309]" />}
+                history={history}
+                timeframeSeconds={timeframe}
+                telemetrySource={telemetrySource}
+              />
+
+              <SingleGraph
+                title="2S Battery Pack Voltage"
+                unit="V"
+                currentValue={latestPacket?.batteryVoltage}
+                dataKey="batteryVoltage"
+                color="#15803d"
+                icon={<Zap className="w-4 h-4 text-[#15803d]" />}
+                history={history}
+                timeframeSeconds={timeframe}
+                thresholdValue={6.4}
+                thresholdLabel="CUTOFF 6.4V"
+                telemetrySource={telemetrySource}
+                isDisabled={optionalTelemetrySettings ? !optionalTelemetrySettings.enableBatteryVoltage : false}
+              />
+            </>
+          )}
+        </div>
+      )}
+
       {activePreset === 'STABILIZATION' && (
         <div className={gridClass}>
           <SingleGraph
@@ -1062,6 +1233,7 @@ export const TelemetryChartPanel: React.FC<TelemetryChartPanelProps> = ({
             thresholdValue={12000}
             thresholdLabel="CRUISE: 12,000 RPM"
             telemetrySource={telemetrySource}
+            isDisabled={optionalTelemetrySettings ? !optionalTelemetrySettings.enableWheelRpm : false}
           />
 
           <SingleGraph
@@ -1076,6 +1248,7 @@ export const TelemetryChartPanel: React.FC<TelemetryChartPanelProps> = ({
             thresholdValue={6.4}
             thresholdLabel="CUTOFF 6.4V"
             telemetrySource={telemetrySource}
+            isDisabled={optionalTelemetrySettings ? !optionalTelemetrySettings.enableBatteryVoltage : false}
           />
 
           {!overviewMode && (
@@ -1132,6 +1305,7 @@ export const TelemetryChartPanel: React.FC<TelemetryChartPanelProps> = ({
             history={history}
             timeframeSeconds={timeframe}
             telemetrySource={telemetrySource}
+            isDisabled={optionalTelemetrySettings ? !optionalTelemetrySettings.enableSps30 : false}
           />
 
           {!overviewMode && (
@@ -1146,6 +1320,7 @@ export const TelemetryChartPanel: React.FC<TelemetryChartPanelProps> = ({
                 history={history}
                 timeframeSeconds={timeframe}
                 telemetrySource={telemetrySource}
+                isDisabled={optionalTelemetrySettings ? !optionalTelemetrySettings.enableUv : false}
               />
 
               <SingleGraph

@@ -34,6 +34,11 @@ import {
   saveOverviewPreferences,
   shouldShowLinkAlertBanner,
 } from './services/overviewPreferences';
+import {
+  OptionalTelemetrySettings,
+  loadOptionalTelemetrySettings,
+  saveOptionalTelemetrySettings,
+} from './services/optionalTelemetrySettings';
 
 import { globalTelemetryEngine } from './services/telemetrySimulator';
 import { globalSerialTelemetry } from './services/serialTelemetry';
@@ -94,6 +99,17 @@ export default function App() {
   // Terminal Log Buffer
   const [rawLogs, setRawLogs] = useState<RawLogEntry[]>([]);
 
+  // Onboard processor reset tracking (IN-SPACe Section 6.1.ix)
+  const [processorResetWarning, setProcessorResetWarning] = useState<{
+    detectedAt: number;
+    prevPkt: number;
+    newPkt: number;
+    prevTime: number;
+    newTime: number;
+  } | null>(null);
+
+  const lastSeenLivePacketRef = useRef<TelemetryPacket | null>(null);
+
   // Modals & Drawers
   const [isTerminalOpen, setIsTerminalOpen] = useState<boolean>(false);
   const [isSettingsModalOpen, setIsSettingsModalOpen] =
@@ -107,6 +123,20 @@ export default function App() {
   const handleUpdateOverviewPrefs = (next: OverviewPreferences) => {
     setOverviewPrefs(next);
     saveOverviewPreferences(getBrowserStorage(), next);
+  };
+
+  // Optional telemetry sensor configuration (persisted to localStorage)
+  const [optionalTelemetrySettings, setOptionalTelemetrySettings] =
+    useState<OptionalTelemetrySettings>(() =>
+      loadOptionalTelemetrySettings(getBrowserStorage())
+    );
+
+  const handleUpdateOptionalTelemetrySettings = (
+    next: OptionalTelemetrySettings
+  ) => {
+    setOptionalTelemetrySettings(next);
+    saveOptionalTelemetrySettings(getBrowserStorage(), next);
+    globalTelemetryEngine.setOptionalTelemetrySettings(next);
   };
 
   // Simulation Serial Port Config
@@ -187,15 +217,52 @@ export default function App() {
     return () => unsubscribe();
   }, []);
 
+  // Safeguard recorded live flight session against accidental browser refresh / navigation (Section 6.1.iv, vii)
+  useEffect(() => {
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (liveHistoryPackets.length > 0) {
+        e.preventDefault();
+        e.returnValue = '';
+      }
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [liveHistoryPackets.length]);
+
   // Subscribe to Live Web Serial Telemetry Service
   useEffect(() => {
     const unsubscribe = globalSerialTelemetry.subscribe({
       onPacket: (packet, rawLine) => {
+        // Detect processor reset discontinuity (Section 6.1.ix)
+        const prev = lastSeenLivePacketRef.current;
+        if (prev) {
+          const isDiscontinuity =
+            (packet.packetNumber < prev.packetNumber && prev.packetNumber > 1) ||
+            (packet.missionTimeSeconds < prev.missionTimeSeconds && prev.missionTimeSeconds > 2);
+
+          if (isDiscontinuity) {
+            setProcessorResetWarning({
+              detectedAt: Date.now(),
+              prevPkt: prev.packetNumber,
+              newPkt: packet.packetNumber,
+              prevTime: prev.missionTimeSeconds,
+              newTime: packet.missionTimeSeconds,
+            });
+
+            addLog(
+              `[RESET_DETECTED] Onboard processor reset detected! Discontinuity: Packet #${prev.packetNumber} -> #${packet.packetNumber}, Mission Time ${prev.missionTimeSeconds}s -> ${packet.missionTimeSeconds}s. Preserving pre-reset history.`,
+              'err',
+              'LIVE_SERIAL'
+            );
+          }
+        }
+        lastSeenLivePacketRef.current = packet;
+
         setLiveLatestPacket(packet);
         setNowMs(Date.now());
 
-        setLiveHistoryPackets((prev) => {
-          const next = [...prev, packet];
+        setLiveHistoryPackets((prevHist) => {
+          const next = [...prevHist, packet];
           if (next.length > MAX_HISTORY_PACKETS) next.shift();
           return next;
         });
@@ -544,6 +611,7 @@ export default function App() {
         onToggleTerminal={() => setIsTerminalOpen(!isTerminalOpen)}
         isTerminalOpen={isTerminalOpen}
         onResetSimulation={handleResetSimulation}
+        optionalTelemetrySettings={optionalTelemetrySettings}
       />
 
       {/* Main Dashboard Workspace Content Area */}
@@ -551,6 +619,26 @@ export default function App() {
         {/* WORKSPACE 1: MISSION OVERVIEW (widgets controlled by local display preferences) */}
         {activeTab === 'OVERVIEW' && (
           <div className="flex flex-col gap-2.5 h-full min-h-0 flex-1 overflow-y-auto lg:overflow-hidden" data-testid="overview-workspace">
+            {/* Onboard processor reset alert banner (IN-SPACe Section 6.1.ix) */}
+            {processorResetWarning && (
+              <div
+                role="alert"
+                className="shrink-0 flex flex-wrap items-center justify-between gap-2 px-3 py-1.5 bg-[var(--status-alert-bg)] border border-[var(--status-alert)]/50 text-[var(--status-alert)] rounded-[var(--radius-sm)] font-mono-data text-[11px]"
+              >
+                <span className="flex items-center gap-1.5 font-bold">
+                  <ShieldAlert className="w-3.5 h-3.5 shrink-0" />
+                  ONBOARD PROCESSOR RESET DETECTED: Discontinuity from Packet #{processorResetWarning.prevPkt} to #{processorResetWarning.newPkt} (Mission Time {processorResetWarning.prevTime}s &rarr; {processorResetWarning.newTime}s). Pre-reset telemetry preserved.
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setProcessorResetWarning(null)}
+                  className="px-2 py-0.5 bg-[var(--bg-surface-2)] text-[var(--text-primary)] hover:bg-[var(--bg-surface-3)] border border-[var(--border-subtle)] rounded-[var(--radius-xs)] text-[10px] cursor-pointer"
+                >
+                  DISMISS
+                </button>
+              </div>
+            )}
+
             {/* Essential live-link alert: remains visible even if the link widget is hidden by preference */}
             {showLinkAlertBanner && (
               <div
@@ -806,6 +894,7 @@ export default function App() {
                               telemetrySource={telemetrySource}
                               isStale={isLiveStale}
                               overviewMode={true}
+                              optionalTelemetrySettings={optionalTelemetrySettings}
                             />
                           </div>
                         )}
@@ -838,6 +927,7 @@ export default function App() {
                         historyPackets={activeHistoryPackets}
                         telemetrySource={telemetrySource}
                         isStale={isLiveStale}
+                        optionalTelemetrySettings={optionalTelemetrySettings}
                       />
                     )}
 
@@ -903,6 +993,7 @@ export default function App() {
                 telemetrySource={telemetrySource}
                 isStale={isLiveStale}
                 expandedMode={true}
+                optionalTelemetrySettings={optionalTelemetrySettings}
               />
             </div>
           </div>
@@ -926,6 +1017,7 @@ export default function App() {
                   telemetrySource={telemetrySource}
                   isStale={isLiveStale}
                   initialPreset="BARO_IMU"
+                  optionalTelemetrySettings={optionalTelemetrySettings}
                 />
               </div>
             </div>
@@ -941,6 +1033,7 @@ export default function App() {
                 historyPackets={activeHistoryPackets}
                 telemetrySource={telemetrySource}
                 isStale={isLiveStale}
+                optionalTelemetrySettings={optionalTelemetrySettings}
               />
             </div>
           </div>
@@ -1087,6 +1180,8 @@ export default function App() {
         onClose={() => setIsSettingsModalOpen(false)}
         overviewPrefs={overviewPrefs}
         onUpdateOverviewPrefs={handleUpdateOverviewPrefs}
+        optionalTelemetrySettings={optionalTelemetrySettings}
+        onUpdateOptionalTelemetrySettings={handleUpdateOptionalTelemetrySettings}
       />
     </div>
   );

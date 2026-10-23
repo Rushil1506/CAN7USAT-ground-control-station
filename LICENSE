@@ -1,0 +1,83 @@
+MIT License
+
+Copyright (c) 2026 The Author(s)
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+===============================================================================
+LEGAL NOTICES, INSTITUTIONAL CONTEXT & THIRD-PARTY ATTRIBUTIONS
+===============================================================================
+
+1. Scope of Grant & Original Author Ownership:
+   This MIT license applies solely to the original software code, user interface
+   components, and algorithms independently authored by the project author(s),
+   to the extent of the author's legal right and authority to license such
+   original contributions.
+   
+   Shared Team Materials & Firmware Bench Code:
+   Any shared competition parameters or test assets (including Team 017 radio
+   parameters and flat-sat test bench files under firmware/flat_sat_telemetry_test/)
+   are included with the confirmed consent of contributing members of Team
+   Parikshit (CAN-7USAT Team 017).
+
+2. Institutional Context & Ownership Considerations:
+   This software was developed in connection with student team participation in
+   the IN-SPACe CAN-7USAT India Student Competition. Student enrollment at an
+   academic institution (such as Manipal Institute of Technology, MAHE) does
+   not automatically vest software copyright in the institution under standard
+   copyright law (e.g., student work is generally not a "work made for hire"
+   absent an express written employment contract, sponsored research agreement,
+   or specific university intellectual property policy governing substantial
+   use of specialized institutional facilities/funds).
+   
+   However, because formal institutional clearance has not been obtained, any
+   applicable university IP regulations, student handbook agreements, or
+   competition participation agreements should be verified if formal commercial
+   or institutional transfer is contemplated. No claim of official university
+   endorsement, sponsorship, or legal assignment by MAHE or IN-SPACe is made.
+
+3. Geographic Map Data & Databases:
+   Any offline map packages (MBTiles or raster tile caches) used with or
+   generated for this software are derived from OpenStreetMap geographic
+   databases and are subject to the Open Data Commons Open Database License
+   (ODbL 1.0) by the OpenStreetMap Foundation (OSMF).
+   - License terms: https://opendatacommons.org/licenses/odbl/1.0/
+   - Attribution: (c) OpenStreetMap contributors
+   The MIT License does NOT apply to geographic map databases or map extracts.
+   Map databases are not distributed within this repository.
+
+4. Online Basemap Providers & Visual Screenshots:
+   - OpenStreetMap Standard: (c) OpenStreetMap contributors (ODbL 1.0; cartography
+     under CC-BY-SA 2.0).
+   - Esri World Imagery (Satellite): (c) Esri, Maxar, Earthstar Geographics,
+     and the GIS User Community.
+   - CARTO Dark Basemap: (c) OpenStreetMap contributors, (c) CARTO.
+   
+   Static screenshots included in documentation are provided for educational and
+   portfolio presentation to illustrate the application's user interface. Users
+   and operators accessing live tile endpoints must comply with each provider's
+   respective Terms of Service. Attribution alone does not grant unconstrained
+   rights to redistribute third-party imagery or tiles outside permitted fair
+   use or applicable provider licenses.
+
+5. Competition Guidelines & Specifications:
+   Competition guidelines, evaluation criteria, telemetry field specifications,
+   and regulatory frameworks referenced in this repository are the intellectual
+   property of the Indian National Space Promotion and Authorization Centre
+   (IN-SPACe), Department of Space, Government of India.

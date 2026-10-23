@@ -1,6 +1,10 @@
 import { BASE_GPS, TEAM_INFO } from '../constants';
 import { FlightStateCode, TelemetryPacket } from '../types';
 import { convertGnssUtcToIst } from './telemetryParser';
+import {
+  OptionalTelemetrySettings,
+  loadOptionalTelemetrySettings,
+} from './optionalTelemetrySettings';
 
 export class TelemetryEngine {
   private packetCount: number = 1240;
@@ -12,6 +16,7 @@ export class TelemetryEngine {
   private timer: number | null = null;
   private sampleRateHz: number = 10; // 10Hz updates
   private baseGps = { latitude: BASE_GPS.latitude, longitude: BASE_GPS.longitude, altitude: BASE_GPS.altitude };
+  private optionalSettings: OptionalTelemetrySettings = loadOptionalTelemetrySettings();
 
   // Mission Physics Constants (2026 PDR Specification)
   private apogee: number = 1000.0;     // meters AGL
@@ -29,6 +34,15 @@ export class TelemetryEngine {
 
   public getBaseGps() {
     return this.baseGps;
+  }
+
+  public setOptionalTelemetrySettings(settings: OptionalTelemetrySettings) {
+    this.optionalSettings = { ...settings };
+    this.tick();
+  }
+
+  public getOptionalTelemetrySettings(): OptionalTelemetrySettings {
+    return { ...this.optionalSettings };
   }
 
   public subscribe(callback: (packet: TelemetryPacket, rawSentence: string) => void) {
@@ -308,7 +322,7 @@ export class TelemetryEngine {
       accelX: Math.round(accelX * 100) / 100,
       accelY: Math.round(accelY * 100) / 100,
       accelZ: Math.round(accelZ * 100) / 100,
-      wheelRpm: Math.round(wheelRpm),
+      wheelRpm: this.optionalSettings.enableWheelRpm ? Math.round(wheelRpm) : null,
       spinRate: Math.round(spinRate * 100) / 100,
       roll: Math.round(roll * 10) / 10,
       pitch: Math.round(pitch * 10) / 10,
@@ -323,16 +337,16 @@ export class TelemetryEngine {
       rawLongitude: longitude,
       rawGpsAltitude: Math.round(altitude + this.baseGps.altitude),
       co2: Math.round(co2Ppm * 10) / 10,
-      pm2_5: Math.round(pm2_5 * 10) / 10,
-      uv: Math.round(uvIndex * 10) / 10,
+      pm2_5: this.optionalSettings.enableSps30 ? Math.round(pm2_5 * 10) / 10 : null,
+      uv: this.optionalSettings.enableUv ? Math.round(uvIndex * 10) / 10 : null,
       humidity: Math.round(humidityPercent * 10) / 10,
       temperature: Math.round(temperatureC * 10) / 10,
       pressure: Math.round(pressureHpa * 10) / 10,
       rawPressurePa: Math.round(pressureHpa * 100),
-      batteryVoltage: Math.round(batteryVoltage * 100) / 100,
+      batteryVoltage: this.optionalSettings.enableBatteryVoltage ? Math.round(batteryVoltage * 100) / 100 : null,
       currentDraw: Math.round(currentDraw * 100) / 100,
       power: Math.round(powerW * 100) / 100,
-      batterySoc: Math.round(batterySoc * 10) / 10,
+      batterySoc: this.optionalSettings.enableBatteryVoltage ? Math.round(batterySoc * 10) / 10 : null,
       rssi: Math.round(-68 + noise() * 3),
       stateCode: state,
       fswStateName: FlightStateCode[state],
@@ -348,8 +362,9 @@ export class TelemetryEngine {
   private formatPdrTelemetrySentence(p: TelemetryPacket): string {
     const accelStr = `${p.accelX ?? 0}:${p.accelY ?? 0}:${p.accelZ ?? 0}`;
     const optionalStr = `CO2=${p.co2 ?? 0};PM=${p.pm2_5 ?? 0};UV=${p.uv ?? 0};RH=${p.humidity ?? 0};RPM=${p.wheelRpm ?? 0};I=${p.currentDraw ?? 0}A`;
+    const voltStr = p.batteryVoltage !== null && p.batteryVoltage !== undefined ? p.batteryVoltage.toFixed(2) : '0.00';
 
-    return `${p.teamId},${p.missionTimeSeconds.toFixed(1)},${p.packetNumber},${(p.altitude ?? 0).toFixed(2)},${(p.pressure ?? 0).toFixed(2)},${(p.temperature ?? 0).toFixed(2)},${(p.batteryVoltage ?? 0).toFixed(2)},${p.timestampUtc},${(p.latitude ?? 0).toFixed(6)},${(p.longitude ?? 0).toFixed(6)},${(p.gpsAltitude ?? 0).toFixed(2)},${p.gpsSats ?? 0},${accelStr},${(p.spinRate ?? 0).toFixed(2)},${p.stateCode ?? 0},${optionalStr}`;
+    return `${p.teamId},${p.missionTimeSeconds.toFixed(1)},${p.packetNumber},${(p.altitude ?? 0).toFixed(2)},${(p.pressure ?? 0).toFixed(2)},${(p.temperature ?? 0).toFixed(2)},${voltStr},${p.timestampUtc},${(p.latitude ?? 0).toFixed(6)},${(p.longitude ?? 0).toFixed(6)},${(p.gpsAltitude ?? 0).toFixed(2)},${p.gpsSats ?? 0},${accelStr},${(p.spinRate ?? 0).toFixed(2)},${p.stateCode ?? 0},${optionalStr}`;
   }
 }
 

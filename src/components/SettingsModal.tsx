@@ -17,6 +17,11 @@ import {
   OverviewPreferences,
   OverviewWidgetId,
 } from '../services/overviewPreferences';
+import {
+  DEFAULT_OPTIONAL_TELEMETRY_SETTINGS,
+  OPTIONAL_TELEMETRY_FIELDS,
+  OptionalTelemetrySettings,
+} from '../services/optionalTelemetrySettings';
 import { RadioAssignmentPanel } from './RadioAssignmentPanel';
 
 interface SettingsModalProps {
@@ -24,6 +29,8 @@ interface SettingsModalProps {
   onClose: () => void;
   overviewPrefs?: OverviewPreferences;
   onUpdateOverviewPrefs?: (prefs: OverviewPreferences) => void;
+  optionalTelemetrySettings?: OptionalTelemetrySettings;
+  onUpdateOptionalTelemetrySettings?: (settings: OptionalTelemetrySettings) => void;
 }
 
 export const SettingsModal: React.FC<SettingsModalProps> = ({
@@ -31,6 +38,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   onClose,
   overviewPrefs,
   onUpdateOverviewPrefs,
+  optionalTelemetrySettings,
+  onUpdateOptionalTelemetrySettings,
 }) => {
   const [telemetryRate, setTelemetryRate] = useState<number>(10);
   const [soundEnabled, setSoundEnabled] = useState<boolean>(true);
@@ -39,12 +48,21 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [localOverviewPrefs, setLocalOverviewPrefs] = useState<OverviewPreferences>(
     () => overviewPrefs ?? DEFAULT_OVERVIEW_PREFERENCES
   );
+  const [localOptionalSettings, setLocalOptionalSettings] = useState<OptionalTelemetrySettings>(
+    () => optionalTelemetrySettings ?? DEFAULT_OPTIONAL_TELEMETRY_SETTINGS
+  );
 
   useEffect(() => {
     if (overviewPrefs) {
       setLocalOverviewPrefs(overviewPrefs);
     }
   }, [overviewPrefs, isOpen]);
+
+  useEffect(() => {
+    if (optionalTelemetrySettings) {
+      setLocalOptionalSettings(optionalTelemetrySettings);
+    }
+  }, [optionalTelemetrySettings, isOpen]);
 
   if (!isOpen) return null;
 
@@ -55,6 +73,17 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         [id]: !prev[id],
       };
       onUpdateOverviewPrefs?.(next);
+      return next;
+    });
+  };
+
+  const handleToggleOptionalSetting = (key: keyof OptionalTelemetrySettings) => {
+    setLocalOptionalSettings((prev) => {
+      const next: OptionalTelemetrySettings = {
+        ...prev,
+        [key]: !prev[key],
+      };
+      onUpdateOptionalTelemetrySettings?.(next);
       return next;
     });
   };
@@ -79,12 +108,15 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     setSoundEnabled(true);
     setLocalOverviewPrefs(DEFAULT_OVERVIEW_PREFERENCES);
     onUpdateOverviewPrefs?.(DEFAULT_OVERVIEW_PREFERENCES);
+    setLocalOptionalSettings(DEFAULT_OPTIONAL_TELEMETRY_SETTINGS);
+    onUpdateOptionalTelemetrySettings?.(DEFAULT_OPTIONAL_TELEMETRY_SETTINGS);
   };
 
   const handleApplyAndClose = () => {
     if (validationError) return;
     setCallsign(trimmedCallsign);
     onUpdateOverviewPrefs?.(localOverviewPrefs);
+    onUpdateOptionalTelemetrySettings?.(localOptionalSettings);
     onClose();
   };
 
@@ -342,7 +374,71 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             </div>
           </div>
 
-          {/* Section 5: Assigned Radio Configuration (Competition Assignment — Team 017) */}
+          {/* Section 5: Configurable Optional Telemetry Sensors & Actuators */}
+          <div className="flex flex-col gap-3 border border-[var(--border-subtle)] bg-[var(--bg-surface-2)]/50 rounded-[var(--radius-sm)] p-3">
+            <div className="flex flex-wrap items-center justify-between gap-1 border-b border-[var(--border-subtle)] pb-1.5">
+              <span className="flex items-center gap-1.5 text-[11px] font-bold text-[var(--text-primary)] uppercase">
+                <Sliders className="w-3.5 h-3.5 text-[var(--accent-teal)]" />
+                OPTIONAL PAYLOAD SENSORS &amp; ACTUATORS
+              </span>
+              <span className="text-[9px] px-1.5 py-0.5 bg-[var(--bg-base)] text-[var(--text-secondary)] border border-[var(--border-subtle)] rounded-[var(--radius-xs)] uppercase">
+                HARDWARE-CONFIGURABLE
+              </span>
+            </div>
+
+            <p className="text-[10px] text-[var(--text-secondary)] leading-relaxed">
+              Enable or disable telemetry monitoring for optional sensors and actuators. When disabled, panels display
+              <strong className="text-[var(--text-tertiary)]"> DISABLED</strong> without fabricating zero values or pretending hardware is installed.
+              On the flat-sat breadboard, burnwire, parafoil servos, and momentum wheel are uninstalled.
+            </p>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              {OPTIONAL_TELEMETRY_FIELDS.map((field) => {
+                const isEnabled = localOptionalSettings[field.key];
+                return (
+                  <label
+                    key={field.key}
+                    className={`flex items-start gap-2 p-2.5 bg-[var(--bg-base)] border rounded-[var(--radius-xs)] cursor-pointer transition-colors ${
+                      isEnabled
+                        ? 'border-[var(--status-nominal)]/40 hover:border-[var(--status-nominal)]/70'
+                        : 'border-[var(--border-subtle)] hover:border-[var(--border-focus)] opacity-80'
+                    }`}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={isEnabled}
+                      onChange={() => handleToggleOptionalSetting(field.key)}
+                      className="mt-0.5 rounded-[var(--radius-xs)] border-[var(--border-subtle)] text-[var(--accent-cobalt)] focus:ring-0 cursor-pointer"
+                    />
+                    <div className="flex flex-col min-w-0 flex-1">
+                      <div className="flex items-center justify-between gap-1 flex-wrap">
+                        <span className="text-[11px] font-bold text-[var(--text-primary)]">
+                          {field.label}
+                        </span>
+                        <span
+                          className={`text-[9px] font-mono px-1.5 py-0.2 rounded-[var(--radius-xs)] font-semibold border ${
+                            isEnabled
+                              ? 'bg-[var(--status-nominal-bg)] text-[var(--status-nominal)] border-[var(--status-nominal)]/40'
+                              : 'bg-slate-800/40 text-slate-400 border-slate-700/50'
+                          }`}
+                        >
+                          {isEnabled ? 'ENABLED' : 'DISABLED'}
+                        </span>
+                      </div>
+                      <span className="text-[9px] text-[var(--text-secondary)] mt-0.5 font-medium">
+                        {field.hardwareName} · <span className="text-[var(--text-tertiary)]">{field.busInterface}</span>
+                      </span>
+                      <span className="text-[9px] text-[var(--text-tertiary)] leading-tight mt-1">
+                        {field.description}
+                      </span>
+                    </div>
+                  </label>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Section 6: Assigned Radio Configuration (Competition Assignment — Team 017) */}
           <div className="flex flex-col gap-2 border border-[var(--border-subtle)] bg-[var(--bg-surface-2)]/50 rounded-[var(--radius-sm)] p-3">
             <RadioAssignmentPanel compact />
           </div>

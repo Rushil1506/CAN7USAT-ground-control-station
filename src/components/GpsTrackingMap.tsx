@@ -5,12 +5,14 @@ import {
   Compass,
   Crosshair,
   ExternalLink,
+  HardDrive,
   MapPin,
   Navigation,
   Radio,
   Satellite,
   ShieldAlert,
   Target,
+  WifiOff,
   X,
   ZoomIn,
   ZoomOut,
@@ -22,8 +24,21 @@ import {
   isValidCoordinateFix,
   parseAndValidateTargetCoordinates,
 } from '../services/landingPredictorClient';
+import {
+  createOfflineTileLayer,
+  OfflineLeafletTileLayer,
+} from '../services/offlineTileLayer';
+import {
+  getOfflineStorage,
+  isCoordinateInBounds,
+  isPacketGpsValid,
+  OfflineMapPack,
+} from '../services/offlineMapService';
+import { OfflineMapModal } from './OfflineMapModal';
 
-interface GpsTrackingMapProps {
+export { isPacketGpsValid };
+
+export interface GpsTrackingMapProps {
   latestPacket: TelemetryPacket | null;
   historyPackets?: TelemetryPacket[];
   telemetrySource?: TelemetrySource;
@@ -33,15 +48,6 @@ interface GpsTrackingMapProps {
   targetLon?: number | null;
   onUpdateTarget?: (lat: number | null, lon: number | null) => void;
   onOpenLandingPredictor?: () => void;
-}
-
-export function isPacketGpsValid(
-  p: TelemetryPacket | null | undefined
-): p is TelemetryPacket & { latitude: number; longitude: number } {
-  if (!p) return false;
-  if (p.gpsValid === false || p.gpsFixType === 'NO_FIX') return false;
-  if (typeof p.gpsSats === 'number' && p.gpsSats <= 0) return false;
-  return isValidCoordinateFix(p.latitude, p.longitude, true);
 }
 
 export function shouldDisplayPredictedOverlay(
@@ -74,6 +80,7 @@ export const GpsTrackingMap: React.FC<GpsTrackingMapProps> = ({
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<L.Map | null>(null);
   const tileLayerRef = useRef<L.TileLayer | null>(null);
+  const coverageLayersRef = useRef<L.Rectangle[]>([]);
   const canSatMarkerRef = useRef<L.Marker | null>(null);
   const targetMarkerRef = useRef<L.Marker | null>(null);
   const gsMarkerRef = useRef<L.Marker | null>(null);
@@ -85,7 +92,76 @@ export const GpsTrackingMap: React.FC<GpsTrackingMapProps> = ({
   const [followVehicle, setFollowVehicle] = useState<boolean>(true);
   const [mapType, setMapType] = useState<'osm' | 'satellite' | 'dark'>('osm');
   const [showTargetModal, setShowTargetModal] = useState<boolean>(false);
+  const [showOfflineModal, setShowOfflineModal] = useState<boolean>(false);
+  const [forceOfflineMode, setForceOfflineMode] = useState<boolean>(false);
+  const [showCoverageBounds, setShowCoverageBounds] = useState<boolean>(true);
+  const [allOfflinePacks, setAllOfflinePacks] = useState<OfflineMapPack[]>([]);
+  const [readyOfflinePacks, setReadyOfflinePacks] = useState<OfflineMapPack[]>([]);
   const [geoError, setGeoError] = useState<string | null>(null);
+  const [currentZoom, setCurrentZoom] = useState<number>(16);
+
+  // Network connectivity detection & graceful failure handling
+  const [isNetworkOnline, setIsNetworkOnline] = useState<boolean>(
+    typeof navigator !== 'undefined' ? navigator.onLine : true
+  );
+  const [onlineFailureCount, setOnlineFailureCount] = useState<number>(0);
+  const [hasMissingTilesInView, setHasMissingTilesInView] = useState<boolean>(false);
+
+  useEffect(() => {
+    const handleOnline = () => {
+      setIsNetworkOnline(true);
+      setOnlineFailureCount(0);
+    };
+    const handleOffline = () => {
+      setIsNetworkOnline(false);
+    };
+
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, []);
+
+  // Effective basemap source mode: ONLINE (live geographic tiles) vs OFFLINE (IndexedDB / local MBTiles)
+  const effectiveSourceMode: 'ONLINE' | 'OFFLINE' = useMemo(() => {
+    if (forceOfflineMode) return 'OFFLINE';
+    if (!isNetworkOnline) return 'OFFLINE';
+    if (onlineFailureCount >= 3) return 'OFFLINE';
+    return 'ONLINE';
+  }, [forceOfflineMode, isNetworkOnline, onlineFailureCount]);
+
+  // Preserve last valid GPS fix to display stale position during GPS dropouts
+  const [lastKnownGps, setLastKnownGps] = useState<{
+    latitude: number;
+    longitude: number;
+    altitude: number | null;
+    gpsAltitude: number | null;
+    timestampUtc: string;
+    receivedAtMs: number;
+  } | null>(null);
+
+  const refreshOfflineState = async () => {
+    try {
+      const storage = getOfflineStorage();
+      const [packs, currentSettings] = await Promise.all([
+        storage.listPacks(),
+        storage.getSettings(),
+      ]);
+      setAllOfflinePacks(packs);
+      setReadyOfflinePacks(packs.filter((p) => p.status === 'READY'));
+      setForceOfflineMode(currentSettings.forceOffline);
+      setShowCoverageBounds(currentSettings.showCoverageBounds);
+    } catch {
+      // Ignore load error
+    }
+  };
+
+  useEffect(() => {
+    refreshOfflineState();
+  }, []);
 
   const [internalTargetLat, setInternalTargetLat] = useState<number | null>(null);
   const [internalTargetLon, setInternalTargetLon] = useState<number | null>(null);
@@ -116,13 +192,118 @@ export const GpsTrackingMap: React.FC<GpsTrackingMapProps> = ({
 
   const isGpsValid = isPacketGpsValid(latestPacket);
 
-  const canSatLat = isGpsValid ? latestPacket.latitude : null;
-  const canSatLon = isGpsValid ? latestPacket.longitude : null;
-  const alt = latestPacket?.altitude ?? null;
-  const gpsAlt =
-    isGpsValid && typeof latestPacket.gpsAltitude === 'number'
-      ? latestPacket.gpsAltitude
+  // Update last known valid position whenever a valid fix is received
+  useEffect(() => {
+    if (isPacketGpsValid(latestPacket)) {
+      setLastKnownGps({
+        latitude: latestPacket.latitude,
+        longitude: latestPacket.longitude,
+        altitude: latestPacket.altitude,
+        gpsAltitude: latestPacket.gpsAltitude,
+        timestampUtc: latestPacket.timestampUtc,
+        receivedAtMs: latestPacket.receivedAtMs ?? Date.now(),
+      });
+    }
+  }, [latestPacket]);
+
+  // Three-state GPS positioning: CURRENT_FIX, STALE_POSITION, or NO_FIX
+  const gpsDisplayState: 'CURRENT_FIX' | 'STALE_POSITION' | 'NO_FIX' = useMemo(() => {
+    if (isGpsValid && !isStale) return 'CURRENT_FIX';
+    if (lastKnownGps !== null) return 'STALE_POSITION';
+    return 'NO_FIX';
+  }, [isGpsValid, isStale, lastKnownGps]);
+
+  const activeCanSatLat =
+    gpsDisplayState === 'CURRENT_FIX'
+      ? (latestPacket?.latitude ?? null)
+      : gpsDisplayState === 'STALE_POSITION'
+      ? (lastKnownGps?.latitude ?? null)
       : null;
+
+  const activeCanSatLon =
+    gpsDisplayState === 'CURRENT_FIX'
+      ? (latestPacket?.longitude ?? null)
+      : gpsDisplayState === 'STALE_POSITION'
+      ? (lastKnownGps?.longitude ?? null)
+      : null;
+
+  const activeAlt =
+    gpsDisplayState === 'CURRENT_FIX'
+      ? (latestPacket?.altitude ?? null)
+      : (lastKnownGps?.altitude ?? null);
+
+  const activeGpsAlt =
+    gpsDisplayState === 'CURRENT_FIX'
+      ? (typeof latestPacket?.gpsAltitude === 'number' ? latestPacket.gpsAltitude : null)
+      : (lastKnownGps?.gpsAltitude ?? null);
+
+  const referenceLat = activeCanSatLat !== null ? activeCanSatLat : gsLat;
+  const referenceLon = activeCanSatLon !== null ? activeCanSatLon : gsLon;
+
+  const regionalCoverageInfo = useMemo(() => {
+    const matchingPack = allOfflinePacks.find((p) =>
+      isCoordinateInBounds(referenceLat, referenceLon, p.bounds)
+    );
+
+    if (!matchingPack) {
+      return {
+        hasPack: false,
+        pack: null,
+        status: 'NONE' as const,
+        shortName: 'Outside Packs',
+        badgeText: 'NO PACK',
+        description: 'Outside Offline Packs',
+      };
+    }
+
+    const short = matchingPack.name.split(' ')[0];
+    if (matchingPack.status === 'READY') {
+      return {
+        hasPack: true,
+        pack: matchingPack,
+        status: 'READY' as const,
+        shortName: `${short} Ready`,
+        badgeText: `${short.toUpperCase()} READY`,
+        description: `${short} Ready (${matchingPack.downloadedTiles} tiles)`,
+      };
+    }
+
+    if (matchingPack.status === 'PARTIAL') {
+      return {
+        hasPack: true,
+        pack: matchingPack,
+        status: 'PARTIAL' as const,
+        shortName: `${short} Partial (${matchingPack.downloadedTiles}/${matchingPack.totalTiles})`,
+        badgeText: `${short.toUpperCase()} PARTIAL (${matchingPack.downloadedTiles}/${matchingPack.totalTiles})`,
+        description: `${short} Partial (${matchingPack.downloadedTiles}/${matchingPack.totalTiles} tiles)`,
+      };
+    }
+
+    return {
+      hasPack: true,
+      pack: matchingPack,
+      status: 'NOT_DOWNLOADED' as const,
+      shortName: `${short} Not Downloaded`,
+      badgeText: `${short.toUpperCase()} NOT DOWNLOADED`,
+      description: `${short} Not Downloaded (0/${matchingPack.totalTiles} tiles)`,
+    };
+  }, [referenceLat, referenceLon, allOfflinePacks]);
+
+  const currentCoverageInfo = useMemo(() => {
+    if (activeCanSatLat === null || activeCanSatLon === null) return null;
+    const matching = readyOfflinePacks.filter((p) =>
+      isCoordinateInBounds(activeCanSatLat, activeCanSatLon, p.bounds)
+    );
+    return {
+      isCovered: matching.length > 0,
+      matchingPackNames: matching.map((p) => p.name),
+    };
+  }, [activeCanSatLat, activeCanSatLon, readyOfflinePacks]);
+
+  const canSatLat = activeCanSatLat;
+  const canSatLon = activeCanSatLon;
+  const alt = activeAlt;
+  const gpsAlt = activeGpsAlt;
   const sats = latestPacket?.gpsSats ?? null;
   const fixType = isGpsValid ? latestPacket.gpsFixType : 'NO_FIX';
 
@@ -185,30 +366,30 @@ export const GpsTrackingMap: React.FC<GpsTrackingMapProps> = ({
 
   const distanceToTargetMeters = useMemo(() => {
     if (
-      canSatLat === null ||
-      canSatLon === null ||
+      activeCanSatLat === null ||
+      activeCanSatLon === null ||
       targetLat === null ||
       targetLon === null
     )
       return null;
-    return calculateDistanceMeters(canSatLat, canSatLon, targetLat, targetLon);
-  }, [canSatLat, canSatLon, targetLat, targetLon]);
+    return calculateDistanceMeters(activeCanSatLat, activeCanSatLon, targetLat, targetLon);
+  }, [activeCanSatLat, activeCanSatLon, targetLat, targetLon]);
 
   const bearingToTargetDeg = useMemo(() => {
     if (
-      canSatLat === null ||
-      canSatLon === null ||
+      activeCanSatLat === null ||
+      activeCanSatLon === null ||
       targetLat === null ||
       targetLon === null
     )
       return null;
-    return calculateBearing(canSatLat, canSatLon, targetLat, targetLon);
-  }, [canSatLat, canSatLon, targetLat, targetLon]);
+    return calculateBearing(activeCanSatLat, activeCanSatLon, targetLat, targetLon);
+  }, [activeCanSatLat, activeCanSatLon, targetLat, targetLon]);
 
   const distanceToGsMeters = useMemo(() => {
-    if (canSatLat === null || canSatLon === null) return null;
-    return calculateDistanceMeters(canSatLat, canSatLon, gsLat, gsLon);
-  }, [canSatLat, canSatLon, gsLat, gsLon]);
+    if (activeCanSatLat === null || activeCanSatLon === null) return null;
+    return calculateDistanceMeters(activeCanSatLat, activeCanSatLon, gsLat, gsLon);
+  }, [activeCanSatLat, activeCanSatLon, gsLat, gsLon]);
 
   const validTrailPoints = useMemo<[number, number][]>(() => {
     return historyPackets
@@ -231,8 +412,8 @@ export const GpsTrackingMap: React.FC<GpsTrackingMapProps> = ({
     if (!container) return;
 
     const initialCenter: [number, number] =
-      canSatLat !== null && canSatLon !== null
-        ? [canSatLat, canSatLon]
+      activeCanSatLat !== null && activeCanSatLon !== null
+        ? [activeCanSatLat, activeCanSatLon]
         : [gsLat, gsLon];
 
     const map = L.map(container, {
@@ -242,15 +423,11 @@ export const GpsTrackingMap: React.FC<GpsTrackingMapProps> = ({
       attributionControl: true,
     });
 
-    const tileLayer = L.tileLayer(tileUrls[mapType], {
-      maxZoom: 19,
-      subdomains: 'abcd',
-      attribution: tileAttributions[mapType],
-    }).addTo(map);
-
-    tileLayerRef.current = tileLayer;
-
     L.control.scale({ position: 'bottomleft', imperial: false }).addTo(map);
+
+    map.on('zoomend', () => {
+      setCurrentZoom(map.getZoom());
+    });
 
     map.on('click', (e: L.LeafletMouseEvent) => {
       const clickedLat = Number(e.latlng.lat.toFixed(6));
@@ -302,22 +479,72 @@ export const GpsTrackingMap: React.FC<GpsTrackingMapProps> = ({
         predictedDriftLineRef.current.remove();
         predictedDriftLineRef.current = null;
       }
+      coverageLayersRef.current.forEach((layer) => layer.remove());
+      coverageLayersRef.current = [];
       map.remove();
       mapRef.current = null;
     };
   }, []);
 
   useEffect(() => {
-    if (!mapRef.current) return;
+    const map = mapRef.current;
+    if (!map) return;
     if (tileLayerRef.current) {
-      mapRef.current.removeLayer(tileLayerRef.current);
+      map.removeLayer(tileLayerRef.current);
+      tileLayerRef.current = null;
     }
-    tileLayerRef.current = L.tileLayer(tileUrls[mapType], {
+    setHasMissingTilesInView(false);
+    const layer = createOfflineTileLayer(tileUrls[mapType], {
       maxZoom: 19,
+      maxNativeZoom: 15,
       subdomains: 'abcd',
       attribution: tileAttributions[mapType],
-    }).addTo(mapRef.current);
-  }, [mapType]);
+      sourceMode: effectiveSourceMode,
+      forceOffline: forceOfflineMode,
+      isDark: mapType === 'dark',
+      onOnlineTileError: () => {
+        setOnlineFailureCount((c) => c + 1);
+      },
+      onMissingOfflineTile: () => {
+        setHasMissingTilesInView(true);
+      },
+    }).addTo(map);
+    tileLayerRef.current = layer;
+
+    return () => {
+      if (tileLayerRef.current && map) {
+        map.removeLayer(tileLayerRef.current);
+        tileLayerRef.current = null;
+      }
+    };
+  }, [mapType, effectiveSourceMode, forceOfflineMode]);
+
+  // Render offline coverage bounding rectangles
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+
+    coverageLayersRef.current.forEach((layer) => layer.remove());
+    coverageLayersRef.current = [];
+
+    if (showCoverageBounds && readyOfflinePacks.length > 0) {
+      readyOfflinePacks.forEach((pack) => {
+        const bounds: L.LatLngBoundsExpression = [
+          [pack.bounds[0], pack.bounds[1]],
+          [pack.bounds[2], pack.bounds[3]],
+        ];
+        const rect = L.rectangle(bounds, {
+          color: '#38bdf8',
+          weight: 1.5,
+          dashArray: '5, 5',
+          fillColor: '#38bdf8',
+          fillOpacity: 0.04,
+          interactive: false,
+        }).addTo(map);
+        coverageLayersRef.current.push(rect);
+      });
+    }
+  }, [readyOfflinePacks, showCoverageBounds]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -383,19 +610,33 @@ export const GpsTrackingMap: React.FC<GpsTrackingMapProps> = ({
       gsMarkerRef.current.setLatLng([gsLat, gsLon]);
     }
 
-    // Marker C: Validated CanSat Position
-    if (canSatLat !== null && canSatLon !== null) {
+    // Marker C: CanSat Position (Active Fix or Stale Last Known Position)
+    if (activeCanSatLat !== null && activeCanSatLon !== null) {
       const altStr =
-        typeof alt === 'number' && Number.isFinite(alt)
-          ? `${alt.toFixed(0)}m`
+        typeof activeAlt === 'number' && Number.isFinite(activeAlt)
+          ? `${activeAlt.toFixed(0)}m`
           : '--';
+
+      const isCurrent = gpsDisplayState === 'CURRENT_FIX';
+      const bgColor = isCurrent ? '#1d4ed8' : '#b45309';
+      const badgeText = isCurrent ? 'CANSAT' : 'LAST KNOWN';
+      const staleTag = isCurrent
+        ? ''
+        : `<span style="background: #78350f; padding: 1px 4px; border-radius: 2px; font-size: 8px; margin-left: 2px;">STALE</span>`;
+      const ringStyle = isCurrent
+        ? `box-shadow: 0 0 0 2px ${bgColor};`
+        : `box-shadow: 0 0 0 2px #b45309, 0 0 8px rgba(180,83,9,0.7);`;
+
       const canSatHtml = `
-        <div style="transform: translate(-50%, -100%); display: flex; flex-direction: column; align-items: center; cursor: pointer;">
-          <div style="background: #1d4ed8; color: #ffffff; font-family: 'JetBrains Mono', monospace; font-size: 10px; font-weight: 700; padding: 2px 6px; border-radius: 4px; border: 1.5px solid #ffffff; white-space: nowrap; box-shadow: 0 2px 6px rgba(29,78,216,0.35); display: flex; align-items: center; gap: 4px;">
-            <span>CANSAT</span>
+        <div style="transform: translate(-50%, -100%); display: flex; flex-direction: column; align-items: center; cursor: pointer; opacity: ${
+          isCurrent ? '1.0' : '0.9'
+        };">
+          <div style="background: ${bgColor}; color: #ffffff; font-family: 'JetBrains Mono', monospace; font-size: 10px; font-weight: 700; padding: 2px 6px; border-radius: 4px; border: 1.5px solid #ffffff; white-space: nowrap; box-shadow: 0 2px 6px rgba(15,23,42,0.35); display: flex; align-items: center; gap: 4px;">
+            <span>${badgeText}</span>
             <span style="opacity: 0.9;">(${altStr})</span>
+            ${staleTag}
           </div>
-          <div style="width: 10px; height: 10px; background: #1d4ed8; border: 2px solid #ffffff; border-radius: 50%; box-shadow: 0 0 0 2px #1d4ed8; margin-top: 2px;"></div>
+          <div style="width: 10px; height: 10px; background: ${bgColor}; border: 2px solid #ffffff; border-radius: 50%; ${ringStyle} margin-top: 2px;"></div>
         </div>
       `;
       const canSatIcon = L.divIcon({
@@ -406,17 +647,17 @@ export const GpsTrackingMap: React.FC<GpsTrackingMapProps> = ({
       });
 
       if (!canSatMarkerRef.current) {
-        canSatMarkerRef.current = L.marker([canSatLat, canSatLon], {
+        canSatMarkerRef.current = L.marker([activeCanSatLat, activeCanSatLon], {
           icon: canSatIcon,
           zIndexOffset: 1000,
         }).addTo(map);
       } else {
-        canSatMarkerRef.current.setLatLng([canSatLat, canSatLon]);
+        canSatMarkerRef.current.setLatLng([activeCanSatLat, activeCanSatLon]);
         canSatMarkerRef.current.setIcon(canSatIcon);
       }
 
       if (followVehicle) {
-        map.panTo([canSatLat, canSatLon], { animate: true, duration: 0.25 });
+        map.panTo([activeCanSatLat, activeCanSatLon], { animate: true, duration: 0.25 });
       }
 
       if (
@@ -425,18 +666,21 @@ export const GpsTrackingMap: React.FC<GpsTrackingMapProps> = ({
         isValidCoordinateFix(targetLat, targetLon, true)
       ) {
         const vectorCoords: [number, number][] = [
-          [canSatLat, canSatLon],
+          [activeCanSatLat, activeCanSatLon],
           [targetLat, targetLon],
         ];
         if (!targetVectorRef.current) {
           targetVectorRef.current = L.polyline(vectorCoords, {
-            color: '#15803d',
+            color: isCurrent ? '#15803d' : '#b45309',
             weight: 1.8,
             dashArray: '4, 4',
             opacity: 0.8,
           }).addTo(map);
         } else {
           targetVectorRef.current.setLatLngs(vectorCoords);
+          targetVectorRef.current.setStyle({
+            color: isCurrent ? '#15803d' : '#b45309',
+          });
         }
       } else if (targetVectorRef.current) {
         targetVectorRef.current.remove();
@@ -623,6 +867,61 @@ export const GpsTrackingMap: React.FC<GpsTrackingMapProps> = ({
             )}
           </div>
 
+          {/* Explicit Basemap Source Status Pill */}
+          <span
+            className={`px-2 py-0.5 border flex items-center gap-1.5 rounded-[var(--radius-xs)] font-mono-data text-[10px] font-semibold shrink-0 ${
+              effectiveSourceMode === 'ONLINE'
+                ? 'text-[var(--status-nominal)] bg-[var(--status-nominal-bg)] border-[var(--status-nominal)]/30'
+                : forceOfflineMode
+                ? 'text-[var(--status-warning)] bg-[var(--status-warning-bg)] border-[var(--status-warning)]/40'
+                : regionalCoverageInfo.status === 'READY' && !hasMissingTilesInView
+                ? 'text-[var(--accent-teal)] bg-[var(--accent-teal-soft)] border-[var(--accent-teal)]/30'
+                : 'text-[var(--status-warning)] bg-[var(--status-warning-bg)] border-[var(--status-warning)]/40'
+            }`}
+            title={
+              effectiveSourceMode === 'ONLINE'
+                ? `Online Basemap active (${mapType.toUpperCase()}) — real-time web tile requests`
+                : forceOfflineMode
+                ? 'Forced Offline Mode enabled — local storage only'
+                : regionalCoverageInfo.status === 'READY'
+                ? `Offline Basemap active — ${regionalCoverageInfo.pack?.name} (100% tiles ready)`
+                : regionalCoverageInfo.status === 'PARTIAL'
+                ? `Offline Basemap active with PARTIAL COVERAGE — ${regionalCoverageInfo.pack?.name} (${regionalCoverageInfo.pack?.downloadedTiles}/${regionalCoverageInfo.pack?.totalTiles} tiles)`
+                : 'Offline Basemap active — viewing area outside local packs'
+            }
+          >
+            {effectiveSourceMode === 'ONLINE' ? (
+              <>
+                <span className="w-1.5 h-1.5 rounded-full bg-[var(--status-nominal)] animate-pulse" />
+                <span>ONLINE ({mapType === 'osm' ? 'OSM' : mapType === 'satellite' ? 'ESRI' : 'CARTO'})</span>
+              </>
+            ) : (
+              <>
+                <WifiOff className="w-3 h-3" />
+                <span>
+                  {forceOfflineMode
+                    ? 'OFFLINE (FORCED)'
+                    : regionalCoverageInfo.status === 'READY' && !hasMissingTilesInView
+                    ? `OFFLINE (${regionalCoverageInfo.shortName})`
+                    : regionalCoverageInfo.status === 'PARTIAL' || hasMissingTilesInView
+                    ? `OFFLINE (${regionalCoverageInfo.shortName})`
+                    : 'OFFLINE (NO PACK)'}
+                </span>
+              </>
+            )}
+          </span>
+
+          {/* Offline Maps Manager */}
+          <button
+            type="button"
+            onClick={() => setShowOfflineModal(true)}
+            title="Manage Regional Offline Map Packs (IndexedDB & MBTiles)"
+            className="px-2 py-0.5 border cursor-pointer flex items-center gap-1 rounded-[var(--radius-xs)] font-medium text-[10px] bg-[var(--bg-surface-2)] text-[var(--text-secondary)] border-[var(--border-subtle)] hover:text-[var(--text-primary)] transition-colors"
+          >
+            <HardDrive className="w-3 h-3" />
+            <span className="hidden sm:inline">Packs</span>
+          </button>
+
           {onOpenLandingPredictor && (
             <button
               type="button"
@@ -670,23 +969,38 @@ export const GpsTrackingMap: React.FC<GpsTrackingMapProps> = ({
             <Crosshair className="w-3.5 h-3.5" />
           </button>
 
-          <div className="flex items-center gap-0.5">
-            <button
-              type="button"
-              onClick={() => mapRef.current?.zoomIn()}
-              title="Zoom In"
-              className="p-1 bg-[var(--bg-surface-2)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] border border-[var(--border-subtle)] cursor-pointer rounded-[var(--radius-xs)]"
+          <div className="flex items-center gap-1">
+            <span
+              className="px-1.5 py-0.5 rounded text-[9.5px] font-mono-data font-semibold bg-[var(--bg-surface-2)] border border-[var(--border-subtle)] text-[var(--text-secondary)]"
+              title={
+                currentZoom > 15
+                  ? `Z${currentZoom}: Enlarged from Z15 native resolution MBTiles raster data`
+                  : `Z${currentZoom}: Native resolution geographic raster data`
+              }
             >
-              <ZoomIn className="w-3.5 h-3.5" />
-            </button>
-            <button
-              type="button"
-              onClick={() => mapRef.current?.zoomOut()}
-              title="Zoom Out"
-              className="p-1 bg-[var(--bg-surface-2)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] border border-[var(--border-subtle)] cursor-pointer rounded-[var(--radius-xs)]"
-            >
-              <ZoomOut className="w-3.5 h-3.5" />
-            </button>
+              Z{currentZoom}
+              {currentZoom > 15 && (
+                <span className="text-[var(--accent-amber)] font-bold ml-1">(Scaled)</span>
+              )}
+            </span>
+            <div className="flex items-center gap-0.5">
+              <button
+                type="button"
+                onClick={() => mapRef.current?.zoomIn()}
+                title="Zoom In"
+                className="p-1 bg-[var(--bg-surface-2)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] border border-[var(--border-subtle)] cursor-pointer rounded-[var(--radius-xs)]"
+              >
+                <ZoomIn className="w-3.5 h-3.5" />
+              </button>
+              <button
+                type="button"
+                onClick={() => mapRef.current?.zoomOut()}
+                title="Zoom Out"
+                className="p-1 bg-[var(--bg-surface-2)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] border border-[var(--border-subtle)] cursor-pointer rounded-[var(--radius-xs)]"
+              >
+                <ZoomOut className="w-3.5 h-3.5" />
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -707,8 +1021,27 @@ export const GpsTrackingMap: React.FC<GpsTrackingMapProps> = ({
         </div>
       )}
 
+      {hasMissingTilesInView && effectiveSourceMode === 'OFFLINE' && (
+        <div className="bg-[var(--status-warning-bg)] border-b border-[var(--status-warning)]/40 text-[var(--status-warning)] px-3 py-1 font-mono-data text-[10px] flex items-center justify-between z-10">
+          <div className="flex items-center gap-1.5">
+            <WifiOff className="w-3.5 h-3.5 text-[var(--status-warning)] shrink-0" />
+            <span>
+              OFFLINE NOTICE: Missing tiles detected in current viewport for{' '}
+              {regionalCoverageInfo.pack ? regionalCoverageInfo.pack.name : 'this region'}. Areas outside downloaded pack display tactical missing-tile indicators.
+            </span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setShowOfflineModal(true)}
+            className="underline cursor-pointer font-bold ml-2 shrink-0"
+          >
+            Manage Packs
+          </button>
+        </div>
+      )}
+
       {/* Main Map Viewport */}
-      <div className="flex-1 relative bg-[#e5e9f0] overflow-hidden min-h-[180px]">
+      <div className={`flex-1 relative overflow-hidden min-h-[180px] ${mapType === 'dark' ? 'bg-[#18181b]' : 'bg-[#e5e9f0]'}`}>
         <div
           ref={mapContainerRef}
           className="absolute inset-0 w-full h-full z-0"
@@ -718,26 +1051,35 @@ export const GpsTrackingMap: React.FC<GpsTrackingMapProps> = ({
         <div className="absolute top-2.5 left-2.5 bg-[var(--bg-surface-1)]/95 border border-[var(--border-subtle)] px-2.5 py-1.5 font-mono-data text-[10px] text-[var(--text-secondary)] flex flex-col gap-0.5 shadow-[var(--shadow-sm)] backdrop-blur-xs z-10 pointer-events-none rounded-[var(--radius-sm)]">
           <div className="flex gap-2 items-center">
             <span className="text-[var(--text-tertiary)]">Vehicle Pos:</span>
-            <span
-              className={`font-bold tabular-nums ${
-                isGpsValid
-                  ? 'text-[var(--accent-cobalt)]'
-                  : 'text-[var(--status-alert)]'
-              }`}
-            >
-              {formatCoordinates(canSatLat, canSatLon)}
-            </span>
+            {gpsDisplayState === 'CURRENT_FIX' && (
+              <span className="font-bold tabular-nums text-[var(--accent-cobalt)]">
+                {formatCoordinates(activeCanSatLat, activeCanSatLon)}
+              </span>
+            )}
+            {gpsDisplayState === 'STALE_POSITION' && (
+              <div className="flex items-center gap-1 font-bold tabular-nums text-[var(--status-warning)]">
+                <span>{formatCoordinates(activeCanSatLat, activeCanSatLon)}</span>
+                <span className="text-[8.5px] px-1 py-0.2 bg-[var(--status-warning-bg)] border border-[var(--status-warning)]/40 rounded font-semibold">
+                  LAST KNOWN (STALE)
+                </span>
+              </div>
+            )}
+            {gpsDisplayState === 'NO_FIX' && (
+              <span className="font-bold tabular-nums text-[var(--status-alert)]">
+                UNAVAILABLE (NO FIX)
+              </span>
+            )}
           </div>
           <div className="flex gap-2 items-center">
             <span className="text-[var(--text-tertiary)]">Est. Landing:</span>
             <span
               className={`font-bold tabular-nums ${
-                shouldDisplayPredictedOverlay(prediction, isStale, canSatLat, canSatLon)
+                shouldDisplayPredictedOverlay(prediction, isStale, activeCanSatLat, activeCanSatLon)
                   ? 'text-[var(--accent-teal)]'
                   : 'text-[var(--status-warning)]'
               }`}
             >
-              {shouldDisplayPredictedOverlay(prediction, isStale, canSatLat, canSatLon) &&
+              {shouldDisplayPredictedOverlay(prediction, isStale, activeCanSatLat, activeCanSatLon) &&
               prediction?.prediction
                 ? formatCoordinates(
                     prediction.prediction.predicted_lat_deg,
@@ -749,16 +1091,27 @@ export const GpsTrackingMap: React.FC<GpsTrackingMapProps> = ({
           <div className="flex gap-2 items-center">
             <span className="text-[var(--text-tertiary)]">Baro / GNSS Alt:</span>
             <span className="text-[var(--text-primary)] font-bold tabular-nums">
-              {typeof alt === 'number' && Number.isFinite(alt)
-                ? `${alt.toFixed(1)}m`
+              {typeof activeAlt === 'number' && Number.isFinite(activeAlt)
+                ? `${activeAlt.toFixed(1)}m`
                 : '--'}{' '}
-              / {gpsAlt !== null ? `${gpsAlt.toFixed(1)}m` : 'NO FIX'}
+              / {activeGpsAlt !== null ? `${activeGpsAlt.toFixed(1)}m` : 'NO FIX'}
             </span>
           </div>
           <div className="flex justify-between items-center text-[9px] text-[var(--text-tertiary)] pt-0.5 border-t border-[var(--border-subtle)]">
-            <span>Valid Track Fixes:</span>
-            <span className="text-[var(--text-primary)] font-semibold tabular-nums">
-              {validTrailPoints.length}
+            <span>Track Fixes / Source:</span>
+            <span className="text-[var(--text-primary)] font-semibold tabular-nums flex items-center gap-1">
+              <span>{validTrailPoints.length}</span>
+              <span
+                className={`font-mono-data text-[8.5px] px-1 py-0.2 rounded font-semibold ${
+                  effectiveSourceMode === 'ONLINE'
+                    ? 'text-[var(--status-nominal)] bg-[var(--status-nominal-bg)]'
+                    : regionalCoverageInfo.status === 'READY' && !hasMissingTilesInView
+                    ? 'text-[var(--accent-teal)] bg-[var(--accent-teal-soft)]'
+                    : 'text-[var(--status-warning)] bg-[var(--status-warning-bg)]'
+                }`}
+              >
+                · {effectiveSourceMode === 'ONLINE' ? `Online (${mapType.toUpperCase()})` : regionalCoverageInfo.shortName}
+              </span>
             </span>
           </div>
         </div>
@@ -903,6 +1256,14 @@ export const GpsTrackingMap: React.FC<GpsTrackingMapProps> = ({
           </div>
         </div>
       )}
+
+      {/* Offline Regional Map Packs Management Modal */}
+      <OfflineMapModal
+        isOpen={showOfflineModal}
+        onClose={() => setShowOfflineModal(false)}
+        onPacksChanged={refreshOfflineState}
+        onToggleForceOffline={(forced) => setForceOfflineMode(forced)}
+      />
     </div>
   );
 };

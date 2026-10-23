@@ -1,5 +1,7 @@
 import { TelemetryPacket, TelemetrySource } from '../types';
 
+export const OFFICIAL_FLIGHT_CSV_FILENAME = 'Flight_2026-IN-SPACe-CAN-7USAT-017.csv';
+
 /**
  * Escapes a cell value for standard CSV format.
  */
@@ -50,14 +52,12 @@ export const TELEMETRY_CSV_COLUMNS = [
 ] as const;
 
 /**
- * Builds the canonical 34-column CSV string from history packets and triggers a browser download.
- * Returns the generated filename.
+ * Pure generator for standard 34-column CSV text from telemetry packets.
  */
-export function exportTelemetryPacketsToCsv(
+export function formatTelemetryPacketsCsv(
   historyPackets: TelemetryPacket[],
-  telemetrySource: TelemetrySource
+  telemetrySource: TelemetrySource = 'LIVE_SERIAL'
 ): string {
-  const isSim = telemetrySource === 'SIMULATION';
   const headers = TELEMETRY_CSV_COLUMNS.join(',');
 
   const rows = historyPackets.map((p) =>
@@ -99,19 +99,45 @@ export function exportTelemetryPacketsToCsv(
     ].join(',')
   );
 
-  const csvContent = 'data:text/csv;charset=utf-8,' + [headers, ...rows].join('\n');
-  const encodedUri = encodeURI(csvContent);
-  const link = document.createElement('a');
-  link.setAttribute('href', encodedUri);
+  return [headers, ...rows].join('\n');
+}
+
+/**
+ * Builds the canonical 34-column CSV string from history packets and triggers a browser download.
+ * Returns the generated filename.
+ */
+export function exportTelemetryPacketsToCsv(
+  historyPackets: TelemetryPacket[],
+  telemetrySource: TelemetrySource,
+  customFilename?: string
+): string {
+  const isSim = telemetrySource === 'SIMULATION';
+  const csvText = formatTelemetryPacketsCsv(historyPackets, telemetrySource);
 
   const prefix = isSim ? 'CANSAT_SIM_TELEMETRY_LOG' : 'CANSAT_LIVE_SERIAL_LOG';
   const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-  const filename = `${prefix}_${timestamp}.csv`;
+  const filename = customFilename ?? `${prefix}_${timestamp}.csv`;
 
-  link.setAttribute('download', filename);
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
+  if (typeof document !== 'undefined') {
+    const csvContent = 'data:text/csv;charset=utf-8,' + encodeURIComponent(csvText);
+    const link = document.createElement('a');
+    link.setAttribute('href', csvContent);
+    link.setAttribute('download', filename);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  }
 
   return filename;
+}
+
+/**
+ * Generates and downloads the official competition-compliant CSV file:
+ * Flight_2026-IN-SPACe-CAN-7USAT-017.csv (IN-SPACe Section 6.3.iii.A)
+ */
+export function exportOfficialFlightCsv(
+  historyPackets: TelemetryPacket[],
+  telemetrySource: TelemetrySource = 'LIVE_SERIAL'
+): string {
+  return exportTelemetryPacketsToCsv(historyPackets, telemetrySource, OFFICIAL_FLIGHT_CSV_FILENAME);
 }

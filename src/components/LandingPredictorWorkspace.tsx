@@ -21,6 +21,8 @@ import {
   ZoomOut,
 } from 'lucide-react';
 import { BASE_GPS } from '../constants';
+import { createOfflineTileLayer } from '../services/offlineTileLayer';
+import { getOfflineStorage } from '../services/offlineMapService';
 import {
   AltitudeSourceMode,
   DEFAULT_PREDICTOR_CONFIG,
@@ -193,6 +195,15 @@ export const LandingPredictorWorkspace: React.FC<LandingPredictorWorkspaceProps>
     config.target_lon_deg !== null ? config.target_lon_deg.toFixed(6) : ''
   );
   const [targetError, setTargetError] = useState<string | null>(null);
+  const [forceOfflineMode, setForceOfflineMode] = useState<boolean>(false);
+  const [currentZoom, setCurrentZoom] = useState<number>(16);
+
+  useEffect(() => {
+    getOfflineStorage()
+      .getSettings()
+      .then((s) => setForceOfflineMode(s.forceOffline))
+      .catch(() => {});
+  }, []);
 
   // Keep input fields synchronized when shared target is updated from Overview or map click
   useEffect(() => {
@@ -253,13 +264,11 @@ export const LandingPredictorWorkspace: React.FC<LandingPredictorWorkspaceProps>
       attributionControl: true,
     });
 
-    tileLayerRef.current = L.tileLayer(tileUrls[mapType], {
-      maxZoom: 19,
-      subdomains: 'abcd',
-      attribution: tileAttributions[mapType],
-    }).addTo(map);
-
     L.control.scale({ position: 'bottomleft', imperial: false }).addTo(map);
+
+    map.on('zoomend', () => {
+      setCurrentZoom(map.getZoom());
+    });
 
     map.on('click', (e: L.LeafletMouseEvent) => {
       const clickedLat = Number(e.latlng.lat.toFixed(6));
@@ -303,16 +312,29 @@ export const LandingPredictorWorkspace: React.FC<LandingPredictorWorkspaceProps>
 
   // Switch basemap tiles
   useEffect(() => {
-    if (!mapRef.current) return;
+    const map = mapRef.current;
+    if (!map) return;
     if (tileLayerRef.current) {
-      mapRef.current.removeLayer(tileLayerRef.current);
+      map.removeLayer(tileLayerRef.current);
+      tileLayerRef.current = null;
     }
-    tileLayerRef.current = L.tileLayer(tileUrls[mapType], {
+    const layer = createOfflineTileLayer(tileUrls[mapType], {
       maxZoom: 19,
+      maxNativeZoom: 15,
       subdomains: 'abcd',
       attribution: tileAttributions[mapType],
-    }).addTo(mapRef.current);
-  }, [mapType]);
+      forceOffline: forceOfflineMode,
+      isDark: mapType === 'dark',
+    }).addTo(map);
+    tileLayerRef.current = layer;
+
+    return () => {
+      if (tileLayerRef.current && map) {
+        map.removeLayer(tileLayerRef.current);
+        tileLayerRef.current = null;
+      }
+    };
+  }, [mapType, forceOfflineMode]);
 
   // Synchronize Map Markers, Flight Track, and Strictly Gated Predicted Landing Overlay
   useEffect(() => {
@@ -708,23 +730,38 @@ export const LandingPredictorWorkspace: React.FC<LandingPredictorWorkspaceProps>
               <span className="hidden sm:inline">Follow</span>
             </button>
 
-            <div className="flex items-center gap-1">
-              <button
-                type="button"
-                onClick={() => mapRef.current?.zoomIn()}
-                title="Zoom In"
-                className="p-1.5 bg-[var(--bg-surface-2)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] border border-[var(--border-subtle)] rounded-[var(--radius-sm)] cursor-pointer"
+            <div className="flex items-center gap-1.5">
+              <span
+                className="px-1.5 py-0.5 rounded text-[10px] font-mono-data font-semibold bg-[var(--bg-surface-2)] border border-[var(--border-subtle)] text-[var(--text-secondary)]"
+                title={
+                  currentZoom > 15
+                    ? `Z${currentZoom}: Enlarged from Z15 native resolution MBTiles raster data`
+                    : `Z${currentZoom}: Native resolution geographic raster data`
+                }
               >
-                <ZoomIn className="w-3.5 h-3.5" />
-              </button>
-              <button
-                type="button"
-                onClick={() => mapRef.current?.zoomOut()}
-                title="Zoom Out"
-                className="p-1.5 bg-[var(--bg-surface-2)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] border border-[var(--border-subtle)] rounded-[var(--radius-sm)] cursor-pointer"
-              >
-                <ZoomOut className="w-3.5 h-3.5" />
-              </button>
+                Z{currentZoom}
+                {currentZoom > 15 && (
+                  <span className="text-[var(--accent-amber)] font-bold ml-1">(Scaled)</span>
+                )}
+              </span>
+              <div className="flex items-center gap-0.5">
+                <button
+                  type="button"
+                  onClick={() => mapRef.current?.zoomIn()}
+                  title="Zoom In"
+                  className="p-1.5 bg-[var(--bg-surface-2)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] border border-[var(--border-subtle)] rounded-[var(--radius-sm)] cursor-pointer"
+                >
+                  <ZoomIn className="w-3.5 h-3.5" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => mapRef.current?.zoomOut()}
+                  title="Zoom Out"
+                  className="p-1.5 bg-[var(--bg-surface-2)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] border border-[var(--border-subtle)] rounded-[var(--radius-sm)] cursor-pointer"
+                >
+                  <ZoomOut className="w-3.5 h-3.5" />
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -800,7 +837,7 @@ export const LandingPredictorWorkspace: React.FC<LandingPredictorWorkspaceProps>
         </div>
 
         {/* Map Canvas Container */}
-        <div className="flex-1 relative bg-[#e5e9f0] min-h-[360px]">
+        <div className={`flex-1 relative min-h-[360px] ${mapType === 'dark' ? 'bg-[#18181b]' : 'bg-[#e5e9f0]'}`}>
           <div ref={mapContainerRef} className="absolute inset-0 w-full h-full z-0" />
 
           {/* Floating Map Legend & Live Coordinate Overlay (Top-Left) */}

@@ -1,0 +1,5 @@
+# CAN-7USAT Precision Landing Predictor Service
+# Runtime uses Python 3.10+ standard library exclusively (zero external runtime dependencies).
+#
+# Development and testing requirements:
+pytest>=8.0.0

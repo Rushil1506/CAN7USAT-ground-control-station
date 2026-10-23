@@ -1,7 +1,8 @@
 import React from 'react';
-import { Award, Download, FileText } from 'lucide-react';
+import { Award, Download, FileSpreadsheet, FileText } from 'lucide-react';
 import { TelemetryPacket, TelemetrySource } from '../types';
 import { TEAM_INFO } from '../constants';
+import { exportOfficialFlightCsv, OFFICIAL_FLIGHT_CSV_FILENAME } from '../services/telemetryExport';
 
 interface JudgeReportPanelProps {
   historyPackets: TelemetryPacket[];
@@ -172,14 +173,27 @@ Generated Date:     ${new Date().toISOString().replace('T', ' ').slice(0, 19)} U
           </div>
         </div>
 
-        <button
-          type="button"
-          onClick={downloadReport}
-          className="bg-[var(--accent-cobalt)] hover:bg-[var(--accent-cobalt-hover)] text-white font-semibold px-3 py-1.5 rounded-[var(--radius-sm)] cursor-pointer flex items-center gap-1.5 text-xs transition-colors"
-        >
-          <Download className="w-3.5 h-3.5" />
-          <span>Export Report (.TXT)</span>
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => exportOfficialFlightCsv(historyPackets, telemetrySource)}
+            disabled={totalFrames === 0}
+            title={`Export official ${OFFICIAL_FLIGHT_CSV_FILENAME} for judge USB submission (Section 6.3.iii)`}
+            className="bg-[var(--status-nominal-bg)] hover:bg-[var(--status-nominal)] hover:text-white text-[var(--status-nominal)] border border-[var(--status-nominal)]/40 font-semibold px-3 py-1.5 rounded-[var(--radius-sm)] cursor-pointer flex items-center gap-1.5 text-xs transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            <FileSpreadsheet className="w-3.5 h-3.5" />
+            <span>Official CSV ({OFFICIAL_FLIGHT_CSV_FILENAME})</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={downloadReport}
+            className="bg-[var(--accent-cobalt)] hover:bg-[var(--accent-cobalt-hover)] text-white font-semibold px-3 py-1.5 rounded-[var(--radius-sm)] cursor-pointer flex items-center gap-1.5 text-xs transition-colors"
+          >
+            <Download className="w-3.5 h-3.5" />
+            <span>Export Report (.TXT)</span>
+          </button>
+        </div>
       </div>
 
       {/* Summary Cards */}

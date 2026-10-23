@@ -1,5 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import {
   convertGnssUtcToIst,
   evaluateGpsValidity,
@@ -364,6 +366,139 @@ describe('convertGnssUtcToIst & parseTelemetryLine — GNSS UTC to IST (+05:30) 
     assert.strictEqual(convertGnssUtcToIst('12:00:60'), null);
     assert.strictEqual(convertGnssUtcToIst('2026-10-17T12:09:37Z'), null);
     assert.strictEqual(formatComputerTimeOfDayUtc(Date.UTC(2026, 9, 17, 14, 5, 9)), '14:05:09');
+  });
+});
+
+describe('CAN-7USAT Flat-Sat Telemetry Dataset & Hardware Compatibility', () => {
+  it('parses every frame from sample_telemetry.csv cleanly without errors', () => {
+    const csvPath = fileURLToPath(
+      new URL('../../../firmware/flat_sat_telemetry_test/sample_telemetry.csv', import.meta.url)
+    );
+    const content = fs.readFileSync(csvPath, 'utf-8');
+    const lines = content.split(/\r?\n/).filter((l) => l.trim().length > 0);
+
+    assert.ok(lines.length >= 20, `Expected at least 20 sample packets, found ${lines.length}`);
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      const res = parseTelemetryLine(line);
+      assert.equal(res.ok, true, `Line ${i + 1} failed to parse: ${res.ok ? '' : res.error} -> '${line}'`);
+      if (!res.ok) continue;
+
+      const p = res.packet;
+      assert.equal(p.teamId, LIVE_TELEMETRY_TEAM_ID);
+      assert.equal(p.packetNumber, i + 1);
+      assert.equal(p.source, 'LIVE_SERIAL');
+      assert.ok(Number.isFinite(p.altitude));
+      assert.ok(Number.isFinite(p.pressure));
+      assert.ok(Number.isFinite(p.rawPressurePa));
+      assert.ok(Number.isFinite(p.temperature));
+      assert.ok(Number.isFinite(p.batteryVoltage));
+      assert.ok(p.timestampUtc !== null);
+      assert.ok(Number.isFinite(p.accelX));
+      assert.ok(Number.isFinite(p.accelY));
+      assert.ok(Number.isFinite(p.accelZ));
+      assert.ok(Number.isFinite(p.roll));
+      assert.ok(Number.isFinite(p.pitch));
+      assert.ok(Number.isFinite(p.spinRate));
+    }
+  });
+
+  it('correctly maps TEST_MODE and LAUNCH_PAD flight states and converts Pa to hPa', () => {
+    const csvPath = fileURLToPath(
+      new URL('../../../firmware/flat_sat_telemetry_test/sample_telemetry.csv', import.meta.url)
+    );
+    const content = fs.readFileSync(csvPath, 'utf-8');
+    const lines = content.split(/\r?\n/).filter((l) => l.trim().length > 0);
+
+    // Frame 1: TEST_MODE, bench rest, pressure 101325.00 Pa -> 1013.25 hPa
+    const res1 = parseTelemetryLine(lines[0]);
+    assert.equal(res1.ok, true);
+    if (res1.ok) {
+      assert.equal(res1.packet.fswStateName, 'TEST_MODE');
+      assert.equal(res1.packet.stateCode, FlightStateCode.TEST_MODE);
+      assert.strictEqual(res1.packet.rawPressurePa, 101325.0);
+      assert.strictEqual(res1.packet.pressure, 1013.25);
+      assert.strictEqual(res1.packet.batteryVoltage, 0.0);
+      assert.strictEqual(res1.packet.timestampUtc, '00:00:00');
+    }
+
+    // Frame 16: LAUNCH_PAD
+    const res16 = parseTelemetryLine(lines[15]);
+    assert.equal(res16.ok, true);
+    if (res16.ok) {
+      assert.equal(res16.packet.fswStateName, 'LAUNCH_PAD');
+      assert.equal(res16.packet.stateCode, FlightStateCode.LAUNCH_PAD);
+    }
+  });
+
+  it('verifies GNSS no-fix frames are cleanly gated while retaining sensor attitude and altitude', () => {
+    const csvPath = fileURLToPath(
+      new URL('../../../firmware/flat_sat_telemetry_test/sample_telemetry.csv', import.meta.url)
+    );
+    const content = fs.readFileSync(csvPath, 'utf-8');
+    const lines = content.split(/\r?\n/).filter((l) => l.trim().length > 0);
+
+    // Initial 5 frames: no GPS lock (00:00:00, 0,0, 0 sats)
+    for (let i = 0; i < 5; i++) {
+      const res = parseTelemetryLine(lines[i]);
+      assert.equal(res.ok, true);
+      if (!res.ok) continue;
+
+      const p = res.packet;
+      assert.equal(p.gpsValid, false);
+      assert.equal(p.gpsFixType, 'NO_FIX');
+      assert.strictEqual(p.latitude, null);
+      assert.strictEqual(p.longitude, null);
+      assert.strictEqual(p.gpsAltitude, null);
+      assert.strictEqual(p.gpsSats, 0);
+
+      // Raw zero coordinates are retained for audit
+      assert.strictEqual(p.rawLatitude, 0);
+      assert.strictEqual(p.rawLongitude, 0);
+
+      // Vital attitude and barometer telemetry are fully intact
+      assert.ok(Math.abs(p.accelZ! - 9.81) < 0.1);
+      assert.strictEqual(p.fswStateName, 'TEST_MODE');
+      assert.strictEqual(p.stateCode, FlightStateCode.TEST_MODE);
+    }
+  });
+
+  it('verifies 3D GNSS lock frames calculate valid fix, IST time conversion, and orientation dynamics', () => {
+    const csvPath = fileURLToPath(
+      new URL('../../../firmware/flat_sat_telemetry_test/sample_telemetry.csv', import.meta.url)
+    );
+    const content = fs.readFileSync(csvPath, 'utf-8');
+    const lines = content.split(/\r?\n/).filter((l) => l.trim().length > 0);
+
+    // Frame 6 (index 5): Locked GPS at 07:15:31 UTC -> 12:45:31 IST
+    const res6 = parseTelemetryLine(lines[5]);
+    assert.equal(res6.ok, true);
+    if (res6.ok) {
+      const p = res6.packet;
+      assert.equal(p.gpsValid, true);
+      assert.equal(p.gpsFixType, '3D');
+      assert.strictEqual(p.gpsSats, 8);
+      assert.strictEqual(p.latitude, 13.352512);
+      assert.strictEqual(p.longitude, 74.792835);
+      assert.strictEqual(p.gpsAltitude, 65.4);
+      assert.strictEqual(p.timestampUtc, '07:15:31');
+      assert.strictEqual(p.gnssTimeIst, '12:45:31');
+    }
+
+    // Frame 12 (index 11): Movement frame with tilt (~14.85° roll, ~-10.12° pitch, 2.40°/s spin)
+    const res12 = parseTelemetryLine(lines[11]);
+    assert.equal(res12.ok, true);
+    if (res12.ok) {
+      const p = res12.packet;
+      assert.strictEqual(p.altitude, 0.52);
+      assert.strictEqual(p.roll, 14.85);
+      assert.strictEqual(p.pitch, -10.12);
+      assert.strictEqual(p.spinRate, 2.4);
+      assert.strictEqual(p.accelX, 2.45);
+      assert.strictEqual(p.accelY, -1.7);
+      assert.strictEqual(p.accelZ, 9.25);
+    }
   });
 });
 

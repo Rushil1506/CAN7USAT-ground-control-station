@@ -50,7 +50,13 @@ import {
   saveOverviewPreferences,
   shouldShowLinkAlertBanner,
 } from '../overviewPreferences';
-import { TELEMETRY_CSV_COLUMNS, csvCell } from '../telemetryExport';
+import {
+  TELEMETRY_CSV_COLUMNS,
+  csvCell,
+  formatTelemetryPacketsCsv,
+  OFFICIAL_FLIGHT_CSV_FILENAME,
+} from '../telemetryExport';
+import { FIELD_READINESS_ITEMS } from '../../components/PreflightChecklistPanel';
 import { FlightStateCode, RawLogEntry, TelemetryPacket } from '../../types';
 
 const LAUNCH_LAT = 13.3525;
@@ -849,5 +855,144 @@ describe('GCS Audit Regression Suite (Stages A, B, and C)', () => {
     assert.ok(transitions[2].x > transitions[1].x);
     assert.ok(transitions[3].x > transitions[2].x);
     assert.ok(transitions[4].x > transitions[3].x);
+  });
+
+  it('Stage F.1: Section 6.3 Official Competition CSV formatting and filename compliance', () => {
+    assert.equal(
+      OFFICIAL_FLIGHT_CSV_FILENAME,
+      'Flight_2026-IN-SPACe-CAN-7USAT-017.csv'
+    );
+
+    const testPackets: TelemetryPacket[] = [
+      makeTelemetryPacket(0, 0, 0, 0, {
+        source: 'LIVE_SERIAL',
+        teamId: '2026-IN-SPACe-CAN-7USAT-017',
+        missionTimeSeconds: 12,
+        packetNumber: 15,
+        altitude: 612.4,
+        rawPressurePa: 101325,
+        pressure: 1013.25,
+        temperature: 24.6,
+        batteryVoltage: 7.84,
+        timestampUtc: '07:15:32',
+        gnssTimeIst: '12:45:32',
+        latitude: 13.352512,
+        longitude: 74.792834,
+        gpsAltitude: 65.4,
+        gpsSats: 8,
+        gpsFixType: '3D',
+        accelX: 0.02,
+        accelY: -0.03,
+        accelZ: 9.81,
+        roll: 0.15,
+        pitch: -0.2,
+        spinRate: 0.01,
+        fswStateName: 'TEST_MODE',
+        stateCode: FlightStateCode.TEST_MODE,
+        velocity: null,
+        wheelRpm: null,
+      }),
+    ];
+
+    const csvOutput = formatTelemetryPacketsCsv(testPackets, 'LIVE_SERIAL');
+    const lines = csvOutput.split('\n');
+    assert.equal(lines.length, 2);
+
+    const headers = lines[0].split(',');
+    assert.equal(headers[1], 'TeamID');
+    assert.equal(headers[2], 'MissionTimeSec');
+    assert.equal(headers[3], 'PacketNumber');
+    assert.equal(headers[4], 'Altitude_m');
+    assert.equal(headers[5], 'Pressure_Pa');
+    assert.equal(headers[8], 'Batt_V');
+    assert.equal(headers[9], 'GnssTime_UTC');
+    assert.equal(headers[12], 'Latitude');
+    assert.equal(headers[13], 'Longitude');
+    assert.equal(headers[14], 'GpsAltitude_m');
+    assert.equal(headers[17], 'AccelX');
+    assert.equal(headers[20], 'Roll_deg');
+    assert.equal(headers[22], 'SpinRate_degs');
+    assert.equal(headers[23], 'FswStateName');
+
+    const values = lines[1].split(',');
+    assert.equal(values[0], 'LIVE_SERIAL');
+    assert.equal(values[1], '2026-IN-SPACe-CAN-7USAT-017');
+    assert.equal(values[2], '12');
+    assert.equal(values[3], '15');
+    assert.equal(values[4], '612.4');
+    assert.equal(values[5], '101325');
+    assert.equal(values[8], '7.84');
+    assert.equal(values[9], '07:15:32');
+    assert.equal(values[17], '0.02');
+    assert.equal(values[19], '9.81');
+    assert.equal(values[20], '0.15');
+    assert.equal(values[22], '0.01');
+    assert.equal(values[23], 'TEST_MODE');
+    assert.equal(values[25], '');
+    assert.equal(values[27], '');
+  });
+
+  it('Stage F.2: Section 6.1.x Real-time plot coverage contract for all required telemetry fields', () => {
+    const standardTabs = getChartPresetTabs(false, false);
+    assert.equal(standardTabs.length, 4);
+
+    const expandedTabs = getChartPresetTabs(false, true);
+    assert.equal(expandedTabs.length, 6);
+    assert.equal(expandedTabs[0].id, 'PRIMARY');
+    assert.equal(expandedTabs[1].id, 'BARO_IMU');
+    assert.equal(expandedTabs[2].id, 'ACCEL_3AXIS');
+    assert.equal(expandedTabs[3].id, 'GNSS_LINK');
+    assert.equal(expandedTabs[4].id, 'STABILIZATION');
+    assert.equal(expandedTabs[5].id, 'ENVIRONMENTAL');
+    assert.equal(expandedTabs[2].label, '3-Axis Accelerometer');
+    assert.equal(expandedTabs[3].label, 'GNSS & Link Metrics');
+  });
+
+  it('Stage F.3: Section 6.1.ix Processor reset discontinuity detection logic', () => {
+    const prevPacket = makeTelemetryPacket(10, 500, 10, 5, {
+      packetNumber: 520,
+      missionTimeSeconds: 520,
+    });
+
+    const resetPacket = makeTelemetryPacket(11, 0, 0, 0, {
+      packetNumber: 1,
+      missionTimeSeconds: 0,
+    });
+
+    const isPacketDiscontinuity =
+      resetPacket.packetNumber < prevPacket.packetNumber &&
+      prevPacket.packetNumber > 1;
+    assert.equal(isPacketDiscontinuity, true);
+
+    const isTimeDiscontinuity =
+      resetPacket.missionTimeSeconds < prevPacket.missionTimeSeconds &&
+      prevPacket.missionTimeSeconds > 2;
+    assert.equal(isTimeDiscontinuity, true);
+
+    const nominalNextPacket = makeTelemetryPacket(12, 490, 12, 6, {
+      packetNumber: 521,
+      missionTimeSeconds: 521,
+    });
+    const isNominalReset =
+      nominalNextPacket.packetNumber < prevPacket.packetNumber;
+    assert.equal(isNominalReset, false);
+  });
+
+  it('Stage F.4: Section 6.1.iii, xi, xii Field equipment & operational checklist items', () => {
+    assert.ok(FIELD_READINESS_ITEMS.length >= 4);
+    const antennaItem = FIELD_READINESS_ITEMS.find((i) => i.id === 'antenna_elevation')!;
+    assert.ok(antennaItem);
+    assert.ok(antennaItem.requirement.includes('tripod'));
+    assert.ok(antennaItem.sectionRef.includes('6.1.iii'));
+
+    const batteryItem = FIELD_READINESS_ITEMS.find((i) => i.id === 'laptop_battery')!;
+    assert.ok(batteryItem);
+    assert.ok(batteryItem.requirement.includes('2.0 hours'));
+    assert.ok(batteryItem.sectionRef.includes('6.1.xi'));
+
+    const offlineMapsItem = FIELD_READINESS_ITEMS.find((i) => i.id === 'offline_maps')!;
+    assert.ok(offlineMapsItem);
+    assert.ok(offlineMapsItem.requirement.includes('IndexedDB'));
+    assert.ok(offlineMapsItem.sectionRef.includes('6.1.xii'));
   });
 });

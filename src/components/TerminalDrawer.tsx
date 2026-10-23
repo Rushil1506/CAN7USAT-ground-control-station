@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Terminal, Download, Trash2, Send, X, Copy, Check, ArrowDownCircle, AlertCircle, Lock } from 'lucide-react';
 import { RawLogEntry, TelemetryPacket, TelemetrySource } from '../types';
-import { exportTelemetryPacketsToCsv } from '../services/telemetryExport';
+import { exportTelemetryPacketsToCsv, exportOfficialFlightCsv, OFFICIAL_FLIGHT_CSV_FILENAME } from '../services/telemetryExport';
 
 interface TerminalDrawerProps {
   isOpen: boolean;
@@ -227,6 +227,19 @@ export const TerminalDrawer: React.FC<TerminalDrawerProps> = ({
               EXPORT {isSim ? 'SIM' : 'LIVE'} CSV ({historyPackets.length})
             </span>
           </button>
+
+          {!isSim && (
+            <button
+              type="button"
+              onClick={() => exportOfficialFlightCsv(historyPackets, telemetrySource)}
+              disabled={historyPackets.length === 0}
+              title={`Export official competition CSV (${OFFICIAL_FLIGHT_CSV_FILENAME}) as mandated by Section 6.3.iii.A`}
+              className="px-2 py-1 bg-[var(--status-nominal-bg)] hover:bg-[var(--status-nominal)] hover:text-white text-[var(--status-nominal)] border border-[var(--status-nominal)]/40 rounded-[var(--radius-xs)] cursor-pointer flex items-center gap-1 text-[10px] font-semibold disabled:opacity-40 disabled:cursor-not-allowed tabular-nums"
+            >
+              <Download className="w-3.5 h-3.5" />
+              <span>OFFICIAL CSV</span>
+            </button>
+          )}
 
           {/* Clear Terminal */}
           <button

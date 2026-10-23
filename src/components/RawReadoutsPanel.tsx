@@ -2,12 +2,14 @@ import React from 'react';
 import { ListFilter, Battery, Volume2, Radio, Activity, Compass, Clock, ShieldCheck } from 'lucide-react';
 import { TelemetryPacket, TelemetrySource } from '../types';
 import { convertGnssUtcToIst } from '../services/telemetryParser';
+import { OptionalTelemetrySettings } from '../services/optionalTelemetrySettings';
 
 interface RawReadoutsPanelProps {
   latestPacket: TelemetryPacket | null;
   historyPackets?: TelemetryPacket[];
   telemetrySource?: TelemetrySource;
   isStale?: boolean;
+  optionalTelemetrySettings?: OptionalTelemetrySettings;
 }
 
 const isValidNum = (val: unknown): val is number => typeof val === 'number' && Number.isFinite(val);
@@ -16,21 +18,35 @@ export const RawReadoutsPanel: React.FC<RawReadoutsPanelProps> = ({
   latestPacket,
   telemetrySource = 'SIMULATION',
   isStale = false,
+  optionalTelemetrySettings,
 }) => {
   const hasPacket = latestPacket !== null;
   const isSim = telemetrySource === 'SIMULATION';
+
+  const isWheelEnabled = optionalTelemetrySettings?.enableWheelRpm ?? false;
+  const isBattEnabled = optionalTelemetrySettings?.enableBatteryVoltage ?? true;
+  const isSps30Enabled = optionalTelemetrySettings?.enableSps30 ?? false;
+  const isUvEnabled = optionalTelemetrySettings?.enableUv ?? false;
 
   const altStr = isValidNum(latestPacket?.altitude) ? `${latestPacket.altitude.toFixed(1)} m` : 'UNAVAILABLE';
   const tempStr = isValidNum(latestPacket?.temperature) ? `${latestPacket.temperature.toFixed(1)}°C` : 'UNAVAILABLE';
   const presStr = isValidNum(latestPacket?.pressure) ? `${latestPacket.pressure.toFixed(2)} hPa` : 'UNAVAILABLE';
   const rawPaStr = isValidNum(latestPacket?.rawPressurePa) ? `${Math.round(latestPacket.rawPressurePa)} Pa` : null;
   const humStr = isValidNum(latestPacket?.humidity) ? `${latestPacket.humidity.toFixed(1)}% RH` : 'UNAVAILABLE';
-  const rpmStr = isValidNum(latestPacket?.wheelRpm)
+
+  const rpmStr = !isWheelEnabled
+    ? 'DISABLED'
+    : isValidNum(latestPacket?.wheelRpm)
     ? `${Math.round(latestPacket.wheelRpm).toLocaleString()} RPM`
     : 'UNAVAILABLE';
 
-  const voltStr = isValidNum(latestPacket?.batteryVoltage) ? `${latestPacket.batteryVoltage.toFixed(2)}V` : 'UNAVAILABLE';
-  const socStr = isValidNum(latestPacket?.batterySoc) ? `${latestPacket.batterySoc.toFixed(0)}%` : null;
+  const voltStr = !isBattEnabled
+    ? 'DISABLED'
+    : isValidNum(latestPacket?.batteryVoltage)
+    ? `${latestPacket.batteryVoltage.toFixed(2)}V`
+    : 'UNAVAILABLE';
+
+  const socStr = isBattEnabled && isValidNum(latestPacket?.batterySoc) ? `${latestPacket.batterySoc.toFixed(0)}%` : null;
   const currStr = isValidNum(latestPacket?.currentDraw) ? `${latestPacket.currentDraw.toFixed(2)}A` : 'N/A';
   const pwrStr = isValidNum(latestPacket?.power) ? `${latestPacket.power.toFixed(1)}W` : 'N/A';
 
@@ -45,8 +61,18 @@ export const RawReadoutsPanel: React.FC<RawReadoutsPanelProps> = ({
   const spinStr = isValidNum(latestPacket?.spinRate) ? `${latestPacket.spinRate.toFixed(1)}°/s` : '--';
 
   const co2Str = isValidNum(latestPacket?.co2) ? `${latestPacket.co2.toFixed(1)} ppm` : 'N/A';
-  const pm25Str = isValidNum(latestPacket?.pm2_5) ? `${latestPacket.pm2_5.toFixed(1)} µg/m³` : 'N/A';
-  const uvStr = isValidNum(latestPacket?.uv) ? `${latestPacket.uv.toFixed(1)} Index` : 'N/A';
+
+  const pm25Str = !isSps30Enabled
+    ? 'DISABLED'
+    : isValidNum(latestPacket?.pm2_5)
+    ? `${latestPacket.pm2_5.toFixed(1)} µg/m³`
+    : 'UNAVAILABLE';
+
+  const uvStr = !isUvEnabled
+    ? 'DISABLED'
+    : isValidNum(latestPacket?.uv)
+    ? `${latestPacket.uv.toFixed(1)} Index`
+    : 'UNAVAILABLE';
 
   const gnssUtcStr =
     hasPacket && typeof latestPacket?.timestampUtc === 'string' && latestPacket.timestampUtc.length > 0
@@ -170,7 +196,11 @@ export const RawReadoutsPanel: React.FC<RawReadoutsPanelProps> = ({
           <span className="text-[var(--text-secondary)]">DCS FLYWHEEL:</span>
           <span
             className={`font-bold tabular-nums ${
-              isValidNum(latestPacket?.wheelRpm) ? 'text-[var(--status-nominal)]' : 'text-[var(--text-tertiary)]'
+              !isWheelEnabled
+                ? 'text-[var(--text-tertiary)]'
+                : isValidNum(latestPacket?.wheelRpm)
+                ? 'text-[var(--status-nominal)]'
+                : 'text-[var(--text-tertiary)]'
             }`}
           >
             {rpmStr}
@@ -245,7 +275,11 @@ export const RawReadoutsPanel: React.FC<RawReadoutsPanelProps> = ({
             <span className="text-[var(--text-secondary)]">2S BATT:</span>
             <span
               className={`font-bold text-xs tabular-nums ${
-                isValidNum(latestPacket?.batteryVoltage) ? 'text-[var(--status-nominal)]' : 'text-[var(--text-tertiary)]'
+                !isBattEnabled
+                  ? 'text-[var(--text-tertiary)]'
+                  : isValidNum(latestPacket?.batteryVoltage)
+                  ? 'text-[var(--status-nominal)]'
+                  : 'text-[var(--text-tertiary)]'
               }`}
             >
               {voltStr}
@@ -303,7 +337,11 @@ export const RawReadoutsPanel: React.FC<RawReadoutsPanelProps> = ({
               <span className="text-[var(--text-tertiary)] block text-[9px]">PM2.5 (SPS30)</span>
               <span
                 className={`font-bold tabular-nums ${
-                  isValidNum(latestPacket?.pm2_5) ? 'text-[var(--status-nominal)]' : 'text-[var(--text-tertiary)]'
+                  !isSps30Enabled
+                    ? 'text-[var(--text-tertiary)]'
+                    : isValidNum(latestPacket?.pm2_5)
+                    ? 'text-[var(--status-nominal)]'
+                    : 'text-[var(--text-tertiary)]'
                 }`}
               >
                 {pm25Str}
@@ -313,7 +351,11 @@ export const RawReadoutsPanel: React.FC<RawReadoutsPanelProps> = ({
               <span className="text-[var(--text-tertiary)] block text-[9px]">UV (LTR390)</span>
               <span
                 className={`font-bold tabular-nums ${
-                  isValidNum(latestPacket?.uv) ? 'text-[var(--action-amber)]' : 'text-[var(--text-tertiary)]'
+                  !isUvEnabled
+                    ? 'text-[var(--text-tertiary)]'
+                    : isValidNum(latestPacket?.uv)
+                    ? 'text-[var(--action-amber)]'
+                    : 'text-[var(--text-tertiary)]'
                 }`}
               >
                 {uvStr}
