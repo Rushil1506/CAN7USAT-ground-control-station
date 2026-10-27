@@ -1,5 +1,11 @@
 import { SerialConnectionState, SerialMetrics, TelemetryPacket } from '../types';
-import { DEFAULT_MAX_LINE_LENGTH, parseTelemetryLine, SerialLineBuffer } from './telemetryParser';
+import {
+  DEFAULT_MAX_LINE_LENGTH,
+  FirmwareControlMessage,
+  parseFirmwareControlLine,
+  parseTelemetryLine,
+  SerialLineBuffer,
+} from './telemetryParser';
 
 // Minimal Web Serial API type declarations for TypeScript environments without @types/w3c-web-serial
 interface SerialPortInfo {
@@ -35,6 +41,7 @@ export interface SerialTelemetryCallbacks {
   onPacket: (packet: TelemetryPacket, rawLine: string) => void;
   onMalformedLine: (rawLine: string, reason: string) => void;
   onStatusChange: (state: SerialConnectionState, metrics: SerialMetrics, message?: string) => void;
+  onControlMessage?: (control: FirmwareControlMessage, rawLine: string) => void;
 }
 
 function getWebSerial(): WebSerialNavigator | null {
@@ -48,6 +55,45 @@ function getWebSerial(): WebSerialNavigator | null {
 
 export function isWebSerialSupported(): boolean {
   return getWebSerial() !== null;
+}
+
+export interface WebSerialSupportDescriptor {
+  supported: boolean;
+  isMobileBrowser: boolean;
+  statusSummary: string;
+  guidanceMessage: string;
+}
+
+export function describeWebSerialSupport(
+  userAgent: string = typeof navigator !== 'undefined' ? navigator.userAgent : '',
+  supported: boolean = isWebSerialSupported()
+): WebSerialSupportDescriptor {
+  const isMobileBrowser = /Android|iPhone|iPad|iPod|Mobile/i.test(userAgent);
+  if (supported) {
+    return {
+      supported: true,
+      isMobileBrowser,
+      statusSummary: 'WEB SERIAL API SUPPORTED',
+      guidanceMessage:
+        'Browser supports Web Serial USB connections (115200 8N1 receive-only). Note: Web Serial reads from a USB receiver plugged directly into this client device.',
+    };
+  }
+  if (isMobileBrowser) {
+    return {
+      supported: false,
+      isMobileBrowser: true,
+      statusSummary: 'MOBILE BROWSER — WEB SERIAL UNSUPPORTED',
+      guidanceMessage:
+        'Web Serial API is not supported on this mobile browser. Direct USB serial hardware links require desktop Chromium (Chrome/Edge) with the LoRa receiver plugged into your machine. Cloud web hosting serves the GCS application, but does not provide remote live telemetry without a separate cloud relay. Local simulation and offline map tools remain fully available.',
+    };
+  }
+  return {
+    supported: false,
+    isMobileBrowser: false,
+    statusSummary: 'WEB SERIAL API UNSUPPORTED',
+    guidanceMessage:
+      'Web Serial API is not supported in this browser. Use Chromium-based Chrome or Edge over localhost or HTTPS with your USB LoRa receiver attached. Note: Web hosting does not provide remote live telemetry without a separate cloud relay.',
+  };
 }
 
 function formatPortLabel(port: WebSerialPort): string {
@@ -85,7 +131,7 @@ export class SerialTelemetryService {
     lastValidPacketIst: null,
     lastError: isWebSerialSupported()
       ? null
-      : 'Web Serial API is not supported in this browser. Use Chromium-based Chrome or Edge over localhost/HTTPS.',
+      : describeWebSerialSupport().guidanceMessage,
     portLabel: null,
   };
 
@@ -139,8 +185,7 @@ export class SerialTelemetryService {
     const serial = getWebSerial();
     if (!serial) {
       this.state = 'UNSUPPORTED';
-      this.metrics.lastError =
-        'Web Serial API is unavailable. Open the GCS in Chrome or Edge on desktop and ensure the Arduino Serial Monitor is closed.';
+      this.metrics.lastError = describeWebSerialSupport().guidanceMessage;
       this.notifyStatus(this.metrics.lastError);
       return false;
     }
@@ -286,8 +331,13 @@ export class SerialTelemetryService {
         this.metrics.lastValidPacketIst = parsed.packet.gnssTimeIst ?? null;
         this.notifyPacket(parsed.packet, parsed.rawLine);
       } else {
-        this.metrics.malformedPacketsReceived++;
-        this.notifyMalformed(parsed.rawLine || rawLine, parsed.error);
+        const controlMsg = parseFirmwareControlLine(rawLine);
+        if (controlMsg) {
+          this.notifyControlMessage(controlMsg, controlMsg.rawLine);
+        } else {
+          this.metrics.malformedPacketsReceived++;
+          this.notifyMalformed(parsed.rawLine || rawLine, parsed.error);
+        }
       }
     }
 
@@ -339,6 +389,14 @@ export class SerialTelemetryService {
 
   private notifyPacket(packet: TelemetryPacket, rawLine: string): void {
     this.listeners.forEach((l) => l.onPacket(packet, rawLine));
+  }
+
+  private notifyControlMessage(control: FirmwareControlMessage, rawLine: string): void {
+    this.listeners.forEach((l) => {
+      if (l.onControlMessage) {
+        l.onControlMessage(control, rawLine);
+      }
+    });
   }
 
   private notifyMalformed(rawLine: string, reason: string): void {

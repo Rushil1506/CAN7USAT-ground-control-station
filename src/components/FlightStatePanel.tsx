@@ -1,217 +1,297 @@
-import React, { useState } from 'react';
-import { ChevronDown, Layers } from 'lucide-react';
-import { FLIGHT_STATES } from '../constants';
+import React from 'react';
+import {
+  CheckCircle2,
+  Cpu,
+  Navigation,
+  ShieldAlert,
+  Volume2,
+  Zap,
+} from 'lucide-react';
 import { FlightStateCode, TelemetryPacket, TelemetrySource } from '../types';
+import { FIRMWARE_FLIGHT_STATES, FLIGHT_STATES } from '../constants';
 
 interface FlightStatePanelProps {
   latestPacket: TelemetryPacket | null;
-  telemetrySource: TelemetrySource;
+  telemetrySource?: TelemetrySource;
   isStale?: boolean;
-  onOverrideState: (state: FlightStateCode | null) => void;
+  onOverrideState?: (state: FlightStateCode) => void;
 }
 
 export const FlightStatePanel: React.FC<FlightStatePanelProps> = ({
   latestPacket,
-  telemetrySource,
+  telemetrySource = 'SIMULATION',
   isStale = false,
   onOverrideState,
 }) => {
-  const [overrideSelection, setOverrideSelection] = useState<'AUTO' | FlightStateCode>('AUTO');
-
   const isSim = telemetrySource === 'SIMULATION';
-
   const hasPacket = latestPacket !== null;
-  const fswStateName =
-    latestPacket && typeof latestPacket.fswStateName === 'string' && latestPacket.fswStateName.trim().length > 0
-      ? latestPacket.fswStateName.trim()
+  const currentCode = latestPacket ? latestPacket.stateCode : null;
+  const currentFswIndex =
+    latestPacket && typeof latestPacket.fswStateIndex === 'number'
+      ? latestPacket.fswStateIndex
+      : currentCode !== null
+      ? FIRMWARE_FLIGHT_STATES.find((s) => s.stateCode === currentCode)?.fswIndex ?? null
       : null;
 
-  const hasMappedStateCode =
-    latestPacket !== null &&
-    typeof latestPacket.stateCode === 'number' &&
-    latestPacket.stateCode in FLIGHT_STATES;
+  const currentFswStateInfo =
+    currentFswIndex !== null
+      ? FIRMWARE_FLIGHT_STATES.find((s) => s.fswIndex === currentFswIndex) ?? null
+      : null;
 
-  const currentStateCode = hasMappedStateCode ? latestPacket!.stateCode! : null;
-  const stateInfo = currentStateCode !== null ? FLIGHT_STATES[currentStateCode] : null;
+  const currentLegacyStateInfo =
+    currentCode !== null ? FLIGHT_STATES[currentCode] : null;
 
-  const handleSelectChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    if (!isSim) return;
-    const val = e.target.value;
-    if (val === 'AUTO') {
-      setOverrideSelection('AUTO');
-      onOverrideState(null);
-    } else {
-      const code = Number(val) as FlightStateCode;
-      setOverrideSelection(code);
-      onOverrideState(code);
-    }
-  };
+  const isUnmappedState = hasPacket && currentCode === null;
 
-  const handleStepClick = (code: FlightStateCode) => {
-    if (!isSim) return;
-    setOverrideSelection(code);
-    onOverrideState(code);
-  };
-
-  const allStates = [
-    FlightStateCode.BOOT,
-    FlightStateCode.TEST_MODE,
-    FlightStateCode.LAUNCH_PAD,
-    FlightStateCode.ASCENT,
-    FlightStateCode.ROCKET_DEPLOY,
-    FlightStateCode.DESCENT,
-    FlightStateCode.AEROBREAK_RELEASE,
-    FlightStateCode.IMPACT,
-  ];
-
-  // Authoritative displayed label: use transmitted fswStateName in live serial, or stateInfo.label in simulation
-  const displayedLabel = !isSim
-    ? fswStateName ?? stateInfo?.label ?? 'UNAVAILABLE'
-    : stateInfo?.label ?? fswStateName ?? 'UNAVAILABLE';
-
-  const accentColor = stateInfo ? stateInfo.color : '#388BFD';
+  const burnwireActive =
+    typeof latestPacket?.burnwireActive === 'boolean' ? latestPacket.burnwireActive : null;
+  const buzzerActive =
+    typeof latestPacket?.buzzerMosfet === 'boolean'
+      ? latestPacket.buzzerMosfet
+      : typeof latestPacket?.audioBeaconActive === 'boolean'
+      ? latestPacket.audioBeaconActive
+      : null;
+  const hasServos =
+    typeof latestPacket?.leftServoDeg === 'number' &&
+    Number.isFinite(latestPacket.leftServoDeg) &&
+    typeof latestPacket?.rightServoDeg === 'number' &&
+    Number.isFinite(latestPacket.rightServoDeg);
+  const hasContinuousSpools =
+    typeof latestPacket?.leftBrakeCmd === 'number' &&
+    Number.isFinite(latestPacket.leftBrakeCmd) &&
+    typeof latestPacket?.rightBrakeCmd === 'number' &&
+    Number.isFinite(latestPacket.rightBrakeCmd);
+  const hasWheelRpm =
+    typeof latestPacket?.wheelRpm === 'number' && Number.isFinite(latestPacket.wheelRpm);
 
   return (
-    <div className="ops-card p-3 select-none flex flex-col gap-2">
-      {/* Header & Sim Override Selector */}
-      <div className="flex justify-between items-center gap-2">
-        <div className="flex items-center gap-1.5 min-w-0">
-          <Layers className="w-3.5 h-3.5 text-[var(--action-amber)] shrink-0" />
-          <span className="font-mono-data text-[11px] font-bold text-[var(--text-primary)] uppercase tracking-wider truncate">
-            FLIGHT STATE (FSW)
+    <div className="ops-card p-3 flex flex-col justify-between w-full min-w-0 select-none">
+      {/* Header */}
+      <div className="flex justify-between items-center border-b border-[var(--border-subtle)] pb-2 mb-2.5">
+        <div className="flex items-center gap-2">
+          <Cpu className="w-4 h-4 text-[var(--accent-cobalt)]" />
+          <span className="text-xs font-bold text-[var(--text-primary)] tracking-tight">
+            Flight Software State Machine (FSW)
           </span>
         </div>
-
-        {/* Sim State Selection Dropdown Override (Simulation Only) */}
-        {isSim ? (
-          <div className="relative shrink-0">
-            <select
-              aria-label="Simulated Flight Software State Override"
-              value={overrideSelection === 'AUTO' ? 'AUTO' : String(overrideSelection)}
-              onChange={handleSelectChange}
-              className="bg-[var(--bg-surface-2)] border border-[var(--border-subtle)] focus:border-[var(--border-focus)] text-[var(--action-amber)] font-mono-data text-[10px] pl-2 pr-5 py-0.5 outline-none rounded-[var(--radius-xs)] cursor-pointer uppercase appearance-none h-6"
-            >
-              <option value="AUTO">SIM: AUTO TIMELINE</option>
-              {Object.values(FLIGHT_STATES).map((st) => (
-                <option key={st.code} value={st.code}>
-                  SIM FORCE [{st.code}] {st.label.replace(/^\d+:\s*/, '')}
-                </option>
-              ))}
-            </select>
-            <ChevronDown className="w-3 h-3 text-[var(--text-secondary)] absolute right-1 top-1.5 pointer-events-none" />
-          </div>
-        ) : (
-          <span
-            className={`font-mono-data text-[9px] px-1.5 py-0.5 border rounded-[var(--radius-xs)] uppercase shrink-0 ${
-              !hasPacket
-                ? 'bg-[var(--bg-surface-2)] text-[var(--text-tertiary)] border-[var(--border-subtle)]'
-                : isStale
-                ? 'bg-[var(--status-warning-bg)] text-[var(--status-warning)] border-[var(--status-warning)]/40 font-bold'
-                : 'bg-[var(--status-nominal-bg)] text-[var(--status-nominal)] border-[var(--status-nominal)]/40 font-bold'
-            }`}
-          >
-            {!hasPacket ? 'AWAITING RX' : isStale ? 'STALE FSW' : 'LIVE FSW'}
-          </span>
-        )}
+        <span className="font-mono-data text-[11px] font-semibold px-2 py-0.5 bg-[var(--bg-surface-2)] text-[var(--text-secondary)] border border-[var(--border-subtle)] rounded-[var(--radius-xs)]">
+          {!hasPacket
+            ? 'STANDBY'
+            : isUnmappedState
+            ? 'UNMAPPED STATE'
+            : currentFswIndex !== null
+            ? `FSW STATE 0${currentFswIndex}`
+            : `STATE 0${currentCode}`}
+        </span>
       </div>
 
-      {/* Primary State Readout Banner */}
-      {hasPacket && fswStateName !== null ? (
+      {/* Active State Banner */}
+      {!hasPacket ? (
+        <div className="p-3 mb-2.5 border border-[var(--border-subtle)] bg-[var(--bg-surface-2)] rounded-[var(--radius-sm)] text-center space-y-1">
+          <div className="font-mono-data text-xs font-bold text-[var(--text-secondary)]">
+            AWAITING TELEMETRY STREAM
+          </div>
+          <p className="text-[11px] text-[var(--text-tertiary)]">
+            {isSim
+              ? 'Simulator paused or initializing.'
+              : 'Connect USB Serial receiver (115200 8N1) and ensure FSW telemetry is started (START command).'}
+          </p>
+        </div>
+      ) : currentFswStateInfo || currentLegacyStateInfo ? (
         <div
-          className="flex flex-col justify-between border border-[var(--border-subtle)] bg-[var(--bg-base)] dot-matrix-bg rounded-[var(--radius-sm)] px-3 py-2.5 border-l-2"
-          style={{ borderLeftColor: accentColor }}
+          className="p-3 mb-2.5 border transition-all rounded-[var(--radius-sm)]"
+          style={{
+            borderColor: (currentFswStateInfo ?? currentLegacyStateInfo)!.color,
+            backgroundColor: (currentFswStateInfo ?? currentLegacyStateInfo)!.bgGlow,
+          }}
         >
-          <div className="flex items-center justify-between gap-2 mb-1">
-            <span className="font-mono-data text-[10px] text-[var(--text-secondary)] uppercase tracking-wider tabular-nums">
-              {stateInfo !== null ? `STATE CODE [${stateInfo.code}]` : 'RAW TRANSMITTER STATE (UNMAPPED)'}
+          <div className="flex justify-between items-center mb-1 gap-2">
+            <span
+              className="font-mono-data text-sm font-bold tracking-tight"
+              style={{ color: (currentFswStateInfo ?? currentLegacyStateInfo)!.color }}
+            >
+              {currentFswStateInfo ? currentFswStateInfo.label : currentLegacyStateInfo!.label}
             </span>
-            <span className="font-mono-data text-[9px] px-1.5 py-0.5 bg-[var(--bg-surface-1)] text-[var(--text-tertiary)] border border-[var(--border-muted)] rounded-[var(--radius-xs)] uppercase">
-              {isSim
-                ? overrideSelection === 'AUTO'
-                  ? 'SIM AUTO'
-                  : 'SIM OVERRIDE'
-                : isStale
-                ? 'LAST RECEIVED (STALE)'
-                : 'LIVE SERIAL'}
+            <span className="text-[10px] font-mono-data uppercase px-1.5 py-0.5 bg-[var(--bg-surface-1)] text-[var(--text-primary)] border border-[var(--border-subtle)] font-semibold rounded-[var(--radius-xs)]">
+              WIRE: {latestPacket.fswStateName}
             </span>
           </div>
-
-          <div
-            className="font-mono-data text-sm sm:text-base font-bold tracking-wide leading-snug break-words"
-            style={{ color: accentColor }}
-          >
-            {displayedLabel}
-          </div>
-
-          <div className="font-mono-data text-[10px] text-[var(--text-secondary)] mt-1 leading-relaxed">
-            {stateInfo !== null
-              ? !isSim && fswStateName !== FlightStateCode[stateInfo.code]
-                ? `Transmitted '${fswStateName}' (mapped to ${stateInfo.label}) — ${stateInfo.description}`
-                : stateInfo.description
-              : `Transmitter reported FSW state '${fswStateName}' (no direct GCS 0–7 enum mapping).`}
-          </div>
+          <p className="text-xs text-[var(--text-primary)] leading-snug font-medium">
+            {(currentFswStateInfo ?? currentLegacyStateInfo)!.description}
+          </p>
+          {currentFswStateInfo && (
+            <div className="mt-1 text-[10px] font-mono-data text-[var(--text-secondary)]">
+              Enum: <strong>FlightState::{currentFswStateInfo.enumName}</strong> • Exit:{' '}
+              {currentFswStateInfo.transitionRule}
+            </div>
+          )}
         </div>
       ) : (
-        <div className="flex flex-col items-center justify-center border border-[var(--border-subtle)] bg-[var(--bg-base)] rounded-[var(--radius-sm)] px-3 py-4 text-center">
-          <span className="font-mono-data text-xs font-bold text-[var(--status-alert)] uppercase">
-            FSW STATE UNAVAILABLE
-          </span>
-          <span className="font-mono-data text-[10px] text-[var(--text-tertiary)] mt-0.5">
-            {isSim
-              ? 'Awaiting valid state from simulator'
-              : 'No valid live serial telemetry packet received yet'}
-          </span>
+        <div
+          role="alert"
+          data-testid="unmapped-fsw-state-banner"
+          className="p-3 mb-2.5 border border-[var(--status-warning)] bg-[var(--status-warning-bg)] rounded-[var(--radius-sm)]"
+        >
+          <div className="flex justify-between items-center mb-1">
+            <span className="font-mono-data text-sm font-bold text-[var(--status-warning)] flex items-center gap-1.5">
+              <ShieldAlert className="w-4 h-4 shrink-0" />
+              <span>RAW FSW STATE: {latestPacket.fswStateName}</span>
+            </span>
+            <span className="text-[10px] font-mono-data uppercase px-1.5 py-0.5 bg-[var(--bg-surface-1)] text-[var(--status-warning)] border border-[var(--status-warning)]/40 font-semibold rounded-[var(--radius-xs)]">
+              UNKNOWN / UNMAPPED
+            </span>
+          </div>
+          <p className="text-xs text-[var(--text-primary)] leading-snug font-medium">
+            Transmitter reported state &lsquo;{latestPacket.fswStateName}&rsquo;, which is not mapped to a known FlightState enum phase. Displaying raw wire value without inference.
+          </p>
         </div>
       )}
 
-      {/* Mission Phase Progression Bar (States 0 - 7) */}
-      <div className="flex flex-col gap-1">
-        <div className="flex justify-between items-center font-mono-data text-[9px] text-[var(--text-tertiary)]">
-          <span>PHASE SEQUENCE (0–7)</span>
-          <span>
-            {currentStateCode !== null
-              ? `STAGE ${currentStateCode + 1} OF 8`
-              : fswStateName !== null
-              ? `CUSTOM (${fswStateName})`
-              : 'STANDBY'}
+      {/* 10-State CAN7USAT_FSW Sequence Stepper (nav_types.h 0..9) */}
+      <div className="flex-1 overflow-y-auto space-y-1 pr-1 max-h-56">
+        {FIRMWARE_FLIGHT_STATES.map((state) => {
+          const isCompleted =
+            currentFswIndex !== null && state.fswIndex < currentFswIndex;
+          const isCurrent =
+            currentFswIndex !== null && state.fswIndex === currentFswIndex;
+
+          return (
+            <div
+              key={state.fswIndex}
+              onClick={() => {
+                if (isSim && onOverrideState) {
+                  onOverrideState(state.stateCode);
+                }
+              }}
+              className={`flex items-center justify-between px-2.5 py-1.5 border text-xs transition-all rounded-[var(--radius-xs)] ${
+                isSim && onOverrideState ? 'cursor-pointer' : ''
+              } ${
+                isCurrent
+                  ? 'bg-[var(--status-info-bg)] border-[var(--accent-cobalt)] text-[var(--text-primary)] font-semibold shadow-[var(--shadow-xs)]'
+                  : isCompleted
+                  ? 'bg-[var(--bg-surface-2)]/60 border-[var(--border-subtle)] text-[var(--text-secondary)]'
+                  : 'bg-[var(--bg-surface-1)] border-transparent text-[var(--text-tertiary)]'
+              }`}
+              title={`Enum: FlightState::${state.enumName} (${state.fswIndex}) | Wire: ${state.wireName} | Rule: ${state.transitionRule}${isStale ? ' (STALE)' : ''}`}
+            >
+              <div className="flex items-center gap-2 min-w-0">
+                {isCompleted ? (
+                  <CheckCircle2 className="w-3.5 h-3.5 text-[var(--status-nominal)] shrink-0" />
+                ) : isCurrent ? (
+                  <span className="w-2.5 h-2.5 rounded-full bg-[var(--accent-cobalt)] shrink-0" />
+                ) : (
+                  <span className="w-2 h-2 rounded-full bg-[var(--border-strong)] shrink-0 ml-0.5" />
+                )}
+                <span className="font-mono-data text-[11px] truncate">
+                  {state.label}
+                </span>
+                {state.enumName !== state.wireName && (
+                  <span className="text-[9px] font-mono-data text-[var(--text-tertiary)] truncate hidden sm:inline">
+                    ({state.enumName})
+                  </span>
+                )}
+              </div>
+
+              {isCurrent && (
+                <span className="text-[10px] font-mono-data text-[var(--accent-cobalt)] uppercase font-bold shrink-0">
+                  ACTIVE
+                </span>
+              )}
+              {isCompleted && (
+                <span className="text-[10px] font-mono-data text-[var(--status-nominal)] font-medium shrink-0">
+                  DONE
+                </span>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Hardware Actuator & Recovery Subsystems Strip (Truthful 24-Field FSW Readouts) */}
+      <div className="mt-2.5 pt-2.5 border-t border-[var(--border-subtle)] grid grid-cols-2 gap-2">
+        <div
+          className={`flex items-center gap-1.5 px-2.5 py-1.5 border text-[11px] font-mono-data rounded-[var(--radius-xs)] ${
+            burnwireActive === true
+              ? 'bg-[var(--status-warning-bg)] border-[var(--status-warning)] text-[var(--status-warning)] font-semibold'
+              : burnwireActive === false
+              ? 'bg-[var(--bg-surface-2)] border-[var(--border-subtle)] text-[var(--text-secondary)]'
+              : 'bg-[var(--bg-surface-2)] border-[var(--border-subtle)] text-[var(--text-tertiary)]'
+          }`}
+          title="Pin 4 XY-MOS Thermal Reefing Cutter (BURNWIRE_MOSFET: 7.0s @ <=700m AGL)"
+        >
+          <Zap className="w-3.5 h-3.5 shrink-0" />
+          <span className="truncate">
+            BURNWIRE:{' '}
+            {burnwireActive === null
+              ? 'UNAVAIL'
+              : burnwireActive
+              ? 'ON (1)'
+              : 'OFF (0)'}
           </span>
         </div>
-        <div className="grid grid-cols-8 gap-1">
-          {allStates.map((code) => {
-            const isCurrent = currentStateCode === code;
-            const isPassed = currentStateCode !== null && currentStateCode > code;
-            const st = FLIGHT_STATES[code];
-            const stepClass = `h-5 font-mono-data text-[9px] tabular-nums transition-colors rounded-[var(--radius-xs)] border flex items-center justify-center ${
-              isCurrent
-                ? 'bg-[var(--action-amber)] text-[var(--action-amber-contrast)] border-[var(--border-amber)] font-bold'
-                : isPassed
-                ? 'bg-[var(--status-nominal-bg)] text-[var(--status-nominal)] border-[var(--status-nominal)]/40 font-semibold'
-                : 'bg-[var(--bg-surface-2)] text-[var(--text-tertiary)] border-[var(--border-subtle)]'
-            }`;
-            // Live Serial: read-only phase indicator (not a button). Simulation: interactive force-state button.
-            if (!isSim) {
-              return (
-                <div
-                  key={code}
-                  title={`Phase [${st.code}] ${st.label}: ${st.description}`}
-                  className={stepClass}
-                >
-                  {code}
-                </div>
-              );
-            }
-            return (
-              <button
-                key={code}
-                type="button"
-                onClick={() => handleStepClick(code)}
-                title={`Force Sim State [${st.code}] ${st.label}: ${st.description}`}
-                className={`${stepClass} cursor-pointer hover:text-[var(--text-primary)]`}
-              >
-                {code}
-              </button>
-            );
-          })}
+
+        <div
+          className={`flex items-center gap-1.5 px-2.5 py-1.5 border text-[11px] font-mono-data rounded-[var(--radius-xs)] ${
+            buzzerActive === true
+              ? 'bg-[var(--status-nominal-bg)] border-[var(--status-nominal)] text-[var(--status-nominal)] font-semibold'
+              : buzzerActive === false
+              ? 'bg-[var(--bg-surface-2)] border-[var(--border-subtle)] text-[var(--text-secondary)]'
+              : 'bg-[var(--bg-surface-2)] border-[var(--border-subtle)] text-[var(--text-tertiary)]'
+          }`}
+          title="Pin 5 XY-MOS Recovery Buzzer Beacon (BUZZER_MOSFET: 500ms pulse in LANDED/FAILSAFE)"
+        >
+          <Volume2 className="w-3.5 h-3.5 shrink-0" />
+          <span className="truncate">
+            BUZZER:{' '}
+            {buzzerActive === null
+              ? 'UNAVAIL'
+              : buzzerActive
+              ? 'ACTIVE (1)'
+              : 'OFF (0)'}
+          </span>
+        </div>
+
+        <div
+          className={`flex items-center gap-1.5 px-2.5 py-1.5 border text-[11px] font-mono-data rounded-[var(--radius-xs)] ${
+            hasContinuousSpools || hasServos
+              ? 'bg-[var(--bg-surface-2)] border-[var(--border-subtle)] text-[var(--text-primary)]'
+              : 'bg-[var(--bg-surface-2)] border-[var(--border-subtle)] text-[var(--text-tertiary)]'
+          }`}
+          title={
+            hasContinuousSpools
+              ? `Continuous-Rotation Parafoil Brake Spools (LEFT_BRAKE_CMD=${(latestPacket!.leftBrakeCmd! * 100).toFixed(0)}%, RIGHT_BRAKE_CMD=${(latestPacket!.rightBrakeCmd! * 100).toFixed(0)}%, Dir=${latestPacket!.leftSpoolDir ?? 'STOP'}/${latestPacket!.rightSpoolDir ?? 'STOP'}, Cal=${latestPacket!.actuatorCalStatus ?? 'UNCAL_LOCKED'})`
+              : 'Left/Right Parafoil Brake Spools / Legacy Servos'
+          }
+        >
+          <Navigation className="w-3.5 h-3.5 text-[var(--accent-cobalt)] shrink-0" />
+          <span className="truncate">
+            {hasContinuousSpools
+              ? `SPOOLS: ${(latestPacket!.leftBrakeCmd! * 100).toFixed(0)}%/${(latestPacket!.rightBrakeCmd! * 100).toFixed(0)}% (${
+                  latestPacket!.actuatorCalStatus === 'UNCAL_LOCKED'
+                    ? 'UNCAL'
+                    : `${latestPacket!.leftSpoolDir ?? 'STOP'}/${latestPacket!.rightSpoolDir ?? 'STOP'}`
+                })`
+              : hasServos
+              ? `SERVOS: ${latestPacket!.leftServoDeg!.toFixed(0)}°/${latestPacket!.rightServoDeg!.toFixed(0)}°`
+              : 'SPOOLS: UNAVAIL'}
+          </span>
+        </div>
+
+        <div
+          className={`flex items-center gap-1.5 px-2.5 py-1.5 border text-[11px] font-mono-data rounded-[var(--radius-xs)] ${
+            hasWheelRpm && latestPacket!.wheelRpm! > 0
+              ? 'bg-[var(--status-info-bg)] border-[var(--accent-cobalt)]/40 text-[var(--accent-cobalt)] font-semibold'
+              : hasWheelRpm
+              ? 'bg-[var(--bg-surface-2)] border-[var(--border-subtle)] text-[var(--text-secondary)]'
+              : 'bg-[var(--bg-surface-2)] border-[var(--border-subtle)] text-[var(--text-tertiary)]'
+          }`}
+          title="Pin 6 Readytosky MT2204 ESC Yaw Reaction Wheel Target RPM (FLYWHEEL_RPM)"
+        >
+          <Cpu className="w-3.5 h-3.5 shrink-0" />
+          <span className="truncate">
+            WHEEL:{' '}
+            {hasWheelRpm ? `${Math.round(latestPacket!.wheelRpm!)} RPM` : 'UNAVAIL'}
+          </span>
         </div>
       </div>
     </div>

@@ -144,7 +144,7 @@ export const TerminalDrawer: React.FC<TerminalDrawerProps> = ({
     <div
       role="region"
       aria-label="Telemetry and Command Log Drawer"
-      className="fixed inset-x-0 bottom-0 z-50 bg-[var(--bg-surface-1)] border-t-2 border-[var(--border-amber)] shadow-2xl flex flex-col h-80 sm:h-96 select-none"
+      className="fixed inset-x-0 bottom-0 z-50 bg-[var(--bg-surface-1)] border-t-2 border-[var(--border-amber)] shadow-2xl flex flex-col h-80 sm:h-96 max-h-[82vh] select-none"
     >
       {/* Drawer Header */}
       <div className="flex flex-wrap justify-between items-center gap-2 px-3 py-2 bg-[var(--bg-surface-2)] border-b border-[var(--border-subtle)] shrink-0">
@@ -168,7 +168,7 @@ export const TerminalDrawer: React.FC<TerminalDrawerProps> = ({
           </span>
         </div>
 
-        <div className="flex items-center gap-1.5 font-mono-data text-xs">
+        <div className="flex flex-wrap items-center gap-1.5 font-mono-data text-xs">
           {/* Source / Severity Filter */}
           <div className="flex bg-[var(--bg-base)] border border-[var(--border-subtle)] p-0.5 rounded-[var(--radius-xs)] text-[10px]">
             {filterLabels.map(({ key, label }) => (

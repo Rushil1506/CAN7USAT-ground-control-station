@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
 import { describe, it } from 'node:test';
+import { STLLoader } from 'three/examples/jsm/loaders/STLLoader.js';
 import {
   computeChartStats,
   computeChartWindowBounds,
@@ -9,9 +12,14 @@ import {
   segmentChartPackets,
 } from '../../components/TelemetryChartPanel';
 import {
+  CANSAT_MM_TO_SCENE_SCALE,
+  buildRamAirParafoilAssembly,
   computeNextMeshRotation,
+  computeResponsiveCameraPosition,
   deriveAttitudeViewportState,
+  normalizeCanSatStlGeometry,
 } from '../../components/ThreeAttitudeViewport';
+import { describeWebSerialSupport } from '../serialTelemetry';
 import {
   filterLogsBySource,
   getLogBadgeLabel,
@@ -57,6 +65,12 @@ import {
   OFFICIAL_FLIGHT_CSV_FILENAME,
 } from '../telemetryExport';
 import { FIELD_READINESS_ITEMS } from '../../components/PreflightChecklistPanel';
+import { FIRMWARE_FLIGHT_STATES } from '../../constants';
+import {
+  parseFirmwareControlLine,
+  parseTelemetryLine,
+  SerialLineBuffer,
+} from '../telemetryParser';
 import { FlightStateCode, RawLogEntry, TelemetryPacket } from '../../types';
 
 const LAUNCH_LAT = 13.3525;
@@ -994,5 +1008,210 @@ describe('GCS Audit Regression Suite (Stages A, B, and C)', () => {
     assert.ok(offlineMapsItem);
     assert.ok(offlineMapsItem.requirement.includes('IndexedDB'));
     assert.ok(offlineMapsItem.sectionRef.includes('6.1.xii'));
+  });
+
+  it('Stage G.1: Real CanSat STL mesh (CANSATassembly.stl) and inflated 7-cell ram-air parafoil assembly', () => {
+    const stlFilePath = path.resolve(process.cwd(), 'public/models/CANSATassembly.stl');
+    assert.equal(fs.existsSync(stlFilePath), true, 'CANSATassembly.stl must exist in public/models/');
+
+    const buffer = fs.readFileSync(stlFilePath);
+    const arrayBuffer = buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength);
+    const loader = new STLLoader();
+    const rawGeo = loader.parse(arrayBuffer);
+
+    const posAttr = rawGeo.getAttribute('position');
+    assert.equal(posAttr.count / 3, 170334, 'STL must contain all 170,334 CAD triangles');
+
+    const { geometry, dimensionsMm } = normalizeCanSatStlGeometry(rawGeo);
+    assert.ok(Math.abs(dimensionsMm.widthMm - 145.85) < 0.2);
+    assert.ok(Math.abs(dimensionsMm.depthMm - 145.86) < 0.2);
+    assert.ok(Math.abs(dimensionsMm.totalHeightMm - 519.4) < 0.2);
+    assert.equal(dimensionsMm.cylinderHeightMm, 400.0);
+
+    const bbox = geometry.boundingBox!;
+    const expectedRadius = 72.93 * CANSAT_MM_TO_SCENE_SCALE;
+    assert.ok(Math.abs(bbox.max.x - expectedRadius) < 0.01);
+    assert.ok(Math.abs(bbox.min.x + expectedRadius) < 0.01);
+    // Cylinder base at Y = -1.00, top rim at Y = +1.00, open Parachute Bay lid up to Y = +1.595
+    assert.ok(Math.abs(bbox.min.y - -1.0) < 0.01);
+    assert.ok(Math.abs(bbox.max.y - 1.595) < 0.02);
+
+    // Verify 7-cell inflated ram-air parafoil and clean suspension lines
+    const parafoil = buildRamAirParafoilAssembly();
+    assert.equal(parafoil.canopyAttachmentPoints.length, 8);
+    for (const pt of parafoil.canopyAttachmentPoints) {
+      assert.ok(Number.isFinite(pt.x) && Number.isFinite(pt.y) && Number.isFinite(pt.z));
+      assert.ok(pt.y > 2.2 && pt.y < 2.8, 'Canopy lower attachment points must sit above CanSat');
+    }
+    assert.ok(Math.abs(parafoil.riserPoints.port.y - 1.04) < 0.05);
+    assert.ok(Math.abs(parafoil.riserPoints.starboard.y - 1.04) < 0.05);
+
+    rawGeo.dispose();
+    geometry.dispose();
+    parafoil.disposables.forEach((d) => d.dispose());
+  });
+
+  it('Stage H.1: Mobile field-operations camera framing and Web Serial browser compatibility', () => {
+    // 1. Desktop aspect ratio (>= 1.15) preserves exact baseline camera coordinates (2.55, 1.75, 7.15)
+    const desktopCam = computeResponsiveCameraPosition(640, 420, 1.0);
+    assert.ok(Math.abs(desktopCam.x - 2.55) < 1e-6);
+    assert.ok(Math.abs(desktopCam.y - 1.75) < 1e-6);
+    assert.ok(Math.abs(desktopCam.z - 7.15) < 1e-6);
+
+    // 2. Narrow mobile portrait aspect ratio (< 1.15) scales camera distance outward to prevent parafoil wingtip clipping
+    const mobilePortraitCam = computeResponsiveCameraPosition(330, 270, 1.0);
+    assert.ok(mobilePortraitCam.z > desktopCam.z);
+    assert.ok(mobilePortraitCam.x > desktopCam.x);
+
+    const veryNarrowCam = computeResponsiveCameraPosition(240, 320, 1.0);
+    assert.ok(veryNarrowCam.z > mobilePortraitCam.z);
+
+    // 3. Pinch/wheel zoom multiplier is clamped safely to [0.58, 1.52]
+    const zoomedIn = computeResponsiveCameraPosition(640, 420, 0.2);
+    const zoomedInClamped = computeResponsiveCameraPosition(640, 420, 0.58);
+    assert.ok(Math.abs(zoomedIn.z - zoomedInClamped.z) < 1e-6);
+
+    const zoomedOut = computeResponsiveCameraPosition(640, 420, 3.0);
+    const zoomedOutClamped = computeResponsiveCameraPosition(640, 420, 1.52);
+    assert.ok(Math.abs(zoomedOut.z - zoomedOutClamped.z) < 1e-6);
+
+    // 4. Web Serial compatibility descriptor truthfully distinguishes mobile browsers, unsupported desktop browsers, and supported Chromium
+    const androidUnsupported = describeWebSerialSupport(
+      'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 Chrome/125.0.0.0 Mobile Safari/537.36',
+      false
+    );
+    assert.equal(androidUnsupported.supported, false);
+    assert.equal(androidUnsupported.isMobileBrowser, true);
+    assert.equal(androidUnsupported.statusSummary, 'MOBILE BROWSER — WEB SERIAL UNSUPPORTED');
+    assert.ok(androidUnsupported.guidanceMessage.includes('not supported on this mobile browser'));
+
+    const iosUnsupported = describeWebSerialSupport(
+      'Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 Mobile/15E148',
+      false
+    );
+    assert.equal(iosUnsupported.supported, false);
+    assert.equal(iosUnsupported.isMobileBrowser, true);
+
+    const firefoxDesktop = describeWebSerialSupport(
+      'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:126.0) Gecko/20100101 Firefox/126.0',
+      false
+    );
+    assert.equal(firefoxDesktop.supported, false);
+    assert.equal(firefoxDesktop.isMobileBrowser, false);
+    assert.equal(firefoxDesktop.statusSummary, 'WEB SERIAL API UNSUPPORTED');
+
+    const chromiumDesktop = describeWebSerialSupport(
+      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/126.0.0.0 Safari/537.36',
+      true
+    );
+    assert.equal(chromiumDesktop.supported, true);
+    assert.equal(chromiumDesktop.isMobileBrowser, false);
+    assert.equal(chromiumDesktop.statusSummary, 'WEB SERIAL API SUPPORTED');
+  });
+
+  it('Stage I.1: CAN7USAT_FSW.ino Flight State Machine contract, 24-field export, and chunked serial reassembly', () => {
+    // 1. Verify FIRMWARE_FLIGHT_STATES matches nav_types.h 0..9 enum order and wire labels
+    assert.equal(FIRMWARE_FLIGHT_STATES.length, 10);
+    const expectedWireNames = [
+      'BOOT',
+      'LAUNCH_PAD',
+      'ASCENT',
+      'DROGUE_DESCENT',
+      'PARAFOIL_DEPLOY',
+      'PRECISION_GUIDE',
+      'TERMINAL_LOITER',
+      'FINAL_APPROACH',
+      'LANDED',
+      'FAILSAFE',
+    ];
+    FIRMWARE_FLIGHT_STATES.forEach((st, idx) => {
+      assert.strictEqual(st.fswIndex, idx);
+      assert.strictEqual(st.wireName, expectedWireNames[idx]);
+    });
+
+    // 2. Verify chunked serial reassembly of a 24-field KEY=VALUE frame + ACK:TARGET_GPS line
+    const fswLine =
+      'TEAM_ID=2026-IN-SPACe-CAN-7USAT-017,MISSION_TIME_S=108,PACKET_COUNT=108,BARO_ALT_M=215.40,PRESSURE_PA=98412.25,BARO_TEMP_C=25.10,BATTERY_V=7.96,GPS_TIME_UTC=14:25:10,LAT_DEG=13.3512000,LON_DEG=74.7931000,GPS_ALT_MSL_M=270.40,SATELLITES=10,ACCEL_X_MPS2=0.140,ACCEL_Y_MPS2=-0.095,ACCEL_Z_MPS2=9.802,ROLL_DEG=-4.10,PITCH_DEG=2.30,GYRO_Z_RADPS=-0.8125,LEFT_SERVO_DEG=36.0,RIGHT_SERVO_DEG=90.0,BURNWIRE_MOSFET=0,BUZZER_MOSFET=0,FLYWHEEL_RPM=6000,FLIGHT_STATE=TERMINAL_LOITER';
+    const ackLine = 'ACK:TARGET_GPS=13.3500000,74.7920000,EAST_M=-86.4,NORTH_M=-278.0';
+
+    const lineBuf = new SerialLineBuffer();
+    const c1 = lineBuf.pushChunk(fswLine.slice(0, 120));
+    assert.equal(c1.lines.length, 0);
+    const c2 = lineBuf.pushChunk(`${fswLine.slice(120)}\r\n${ackLine.slice(0, 20)}`);
+    assert.equal(c2.lines.length, 1);
+    assert.strictEqual(c2.lines[0], fswLine);
+    const c3 = lineBuf.pushChunk(`${ackLine.slice(20)}\r\n`);
+    assert.equal(c3.lines.length, 1);
+    assert.strictEqual(c3.lines[0], ackLine);
+
+    const parsedPkt = parseTelemetryLine(c2.lines[0], 1700000108000);
+    assert.equal(parsedPkt.ok, true);
+    if (!parsedPkt.ok) return;
+
+    assert.strictEqual(parsedPkt.packet.stateCode, FlightStateCode.TERMINAL_GUIDANCE);
+    assert.strictEqual(parsedPkt.packet.fswStateIndex, 6);
+    assert.strictEqual(parsedPkt.packet.derivedSteering, -0.6);
+    assert.strictEqual(parsedPkt.packet.wheelRpm, 6000);
+
+    const parsedAck = parseFirmwareControlLine(c3.lines[0]);
+    assert.ok(parsedAck !== null);
+    assert.strictEqual(parsedAck?.kind, 'ACK');
+    assert.strictEqual(parsedAck?.category, 'TARGET_GPS');
+
+    // 3. Verify CSV export preserves all 34 canonical columns and exports FLYWHEEL_RPM=6000
+    const csvOut = formatTelemetryPacketsCsv([parsedPkt.packet], 'LIVE_SERIAL');
+    const csvRows = csvOut.trim().split('\n');
+    assert.equal(csvRows.length, 2);
+    assert.ok(csvRows[1].includes(',6000,'));
+    assert.ok(csvRows[1].includes(',TERMINAL_LOITER,'));
+  });
+
+  it('Stage J.1: Complete Subsystem & Sensor Readout Matrix container query and responsive rules contract', () => {
+    const cssPath = path.resolve(process.cwd(), 'src/index.css');
+    assert.equal(fs.existsSync(cssPath), true);
+    const cssContent = fs.readFileSync(cssPath, 'utf-8');
+
+    // 1. Container type inline-size declaration on readout-matrix
+    assert.ok(
+      cssContent.includes('container-type: inline-size;'),
+      'index.css must define container-type: inline-size'
+    );
+    assert.ok(
+      cssContent.includes('container-name: readout-matrix;'),
+      'index.css must name the container context readout-matrix'
+    );
+
+    // 2. Container query breakpoints for 1, 2, and 4 columns based on available container width
+    assert.ok(
+      cssContent.includes('@container readout-matrix (min-width: 560px)'),
+      'index.css must define @container min-width: 560px for 2-column layout'
+    );
+    assert.ok(
+      cssContent.includes('@container readout-matrix (min-width: 1120px)'),
+      'index.css must define @container min-width: 1120px for 4-column layout'
+    );
+
+    // 3. Readout row flex-wrap, overflow-wrap, and word-break rules to prevent text clipping & collision
+    assert.ok(
+      cssContent.includes('flex-wrap: wrap;'),
+      'readout rows must flex-wrap to prevent overlapping long telemetry values'
+    );
+    assert.ok(
+      cssContent.includes('overflow-wrap: break-word;'),
+      'readout labels and values must wrap sensibly'
+    );
+
+    // 4. Verify RawReadoutsPanel source file incorporates the container query classes and test IDs
+    const panelPath = path.resolve(process.cwd(), 'src/components/RawReadoutsPanel.tsx');
+    assert.equal(fs.existsSync(panelPath), true);
+    const panelContent = fs.readFileSync(panelPath, 'utf-8');
+
+    assert.ok(panelContent.includes('raw-readouts-container'));
+    assert.ok(panelContent.includes('raw-readouts-grid'));
+    assert.ok(panelContent.includes('raw-readout-card'));
+    assert.ok(panelContent.includes('raw-readout-row'));
+    assert.ok(panelContent.includes('raw-readout-label'));
+    assert.ok(panelContent.includes('raw-readout-value'));
+    assert.ok(panelContent.includes('data-testid="raw-readouts-grid"'));
   });
 });

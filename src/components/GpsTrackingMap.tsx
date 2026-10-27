@@ -807,8 +807,8 @@ export const GpsTrackingMap: React.FC<GpsTrackingMapProps> = ({
   return (
     <div className="ops-card flex flex-col h-full select-none overflow-hidden relative">
       {/* Top Header Bar */}
-      <div className="px-3 py-2 bg-[var(--bg-surface-1)] border-b border-[var(--border-subtle)] flex justify-between items-center z-10 shrink-0 gap-2">
-        <div className="flex items-center gap-2 min-w-0">
+      <div className="px-2.5 sm:px-3 py-1.5 sm:py-2 bg-[var(--bg-surface-1)] border-b border-[var(--border-subtle)] flex flex-wrap justify-between items-center z-10 shrink-0 gap-1.5 sm:gap-2">
+        <div className="flex items-center gap-1.5 sm:gap-2 min-w-0">
           <MapPin className="w-4 h-4 text-[var(--accent-cobalt)] shrink-0" />
           <span className="text-xs font-bold text-[var(--text-primary)] tracking-tight truncate">
             GNSS Spatial Track
@@ -827,13 +827,13 @@ export const GpsTrackingMap: React.FC<GpsTrackingMapProps> = ({
           </span>
         </div>
 
-        <div className="flex items-center gap-1.5 text-[11px] shrink-0">
+        <div className="flex flex-wrap items-center gap-1 sm:gap-1.5 text-[11px] shrink-0">
           {/* Map Layer Switcher */}
-          <div className="hidden md:flex items-center bg-[var(--bg-surface-2)] border border-[var(--border-subtle)] rounded-[var(--radius-xs)] p-0.5 text-[10px] font-medium">
+          <div className="flex items-center bg-[var(--bg-surface-2)] border border-[var(--border-subtle)] rounded-[var(--radius-xs)] p-0.5 text-[10px] font-medium">
             <button
               type="button"
               onClick={() => setMapType('osm')}
-              className={`px-2 py-0.5 rounded-[var(--radius-xs)] cursor-pointer transition-colors ${
+              className={`px-1.5 sm:px-2 py-0.5 rounded-[var(--radius-xs)] cursor-pointer transition-colors ${
                 mapType === 'osm'
                   ? 'bg-[var(--bg-surface-1)] text-[var(--accent-cobalt)] font-semibold shadow-[var(--shadow-xs)]'
                   : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
@@ -844,7 +844,7 @@ export const GpsTrackingMap: React.FC<GpsTrackingMapProps> = ({
             <button
               type="button"
               onClick={() => setMapType('satellite')}
-              className={`px-2 py-0.5 rounded-[var(--radius-xs)] cursor-pointer transition-colors ${
+              className={`px-1.5 sm:px-2 py-0.5 rounded-[var(--radius-xs)] cursor-pointer transition-colors ${
                 mapType === 'satellite'
                   ? 'bg-[var(--bg-surface-1)] text-[var(--accent-cobalt)] font-semibold shadow-[var(--shadow-xs)]'
                   : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
@@ -856,7 +856,7 @@ export const GpsTrackingMap: React.FC<GpsTrackingMapProps> = ({
               <button
                 type="button"
                 onClick={() => setMapType('dark')}
-                className={`px-2 py-0.5 rounded-[var(--radius-xs)] cursor-pointer transition-colors ${
+                className={`px-1.5 sm:px-2 py-0.5 rounded-[var(--radius-xs)] cursor-pointer transition-colors ${
                   mapType === 'dark'
                     ? 'bg-[var(--bg-surface-1)] text-[var(--accent-cobalt)] font-semibold shadow-[var(--shadow-xs)]'
                     : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
@@ -869,7 +869,7 @@ export const GpsTrackingMap: React.FC<GpsTrackingMapProps> = ({
 
           {/* Explicit Basemap Source Status Pill */}
           <span
-            className={`px-2 py-0.5 border flex items-center gap-1.5 rounded-[var(--radius-xs)] font-mono-data text-[10px] font-semibold shrink-0 ${
+            className={`hidden sm:flex px-2 py-0.5 border items-center gap-1.5 rounded-[var(--radius-xs)] font-mono-data text-[10px] font-semibold shrink-0 ${
               effectiveSourceMode === 'ONLINE'
                 ? 'text-[var(--status-nominal)] bg-[var(--status-nominal-bg)] border-[var(--status-nominal)]/30'
                 : forceOfflineMode
@@ -1048,18 +1048,18 @@ export const GpsTrackingMap: React.FC<GpsTrackingMapProps> = ({
         />
 
         {/* Top-Left Overlay: CanSat Live Coordinates & Gated Predicted Landing */}
-        <div className="absolute top-2.5 left-2.5 bg-[var(--bg-surface-1)]/95 border border-[var(--border-subtle)] px-2.5 py-1.5 font-mono-data text-[10px] text-[var(--text-secondary)] flex flex-col gap-0.5 shadow-[var(--shadow-sm)] backdrop-blur-xs z-10 pointer-events-none rounded-[var(--radius-sm)]">
-          <div className="flex gap-2 items-center">
-            <span className="text-[var(--text-tertiary)]">Vehicle Pos:</span>
+        <div className="absolute top-2 left-2 sm:top-2.5 sm:left-2.5 max-w-[calc(100%-16px)] sm:max-w-none bg-[var(--bg-surface-1)]/95 border border-[var(--border-subtle)] px-2 py-1 sm:px-2.5 sm:py-1.5 font-mono-data text-[9.5px] sm:text-[10px] text-[var(--text-secondary)] flex flex-col gap-0.5 shadow-[var(--shadow-sm)] backdrop-blur-xs z-10 pointer-events-none rounded-[var(--radius-sm)]">
+          <div className="flex gap-1.5 sm:gap-2 items-center truncate">
+            <span className="text-[var(--text-tertiary)] shrink-0">Vehicle Pos:</span>
             {gpsDisplayState === 'CURRENT_FIX' && (
-              <span className="font-bold tabular-nums text-[var(--accent-cobalt)]">
+              <span className="font-bold tabular-nums text-[var(--accent-cobalt)] truncate">
                 {formatCoordinates(activeCanSatLat, activeCanSatLon)}
               </span>
             )}
             {gpsDisplayState === 'STALE_POSITION' && (
-              <div className="flex items-center gap-1 font-bold tabular-nums text-[var(--status-warning)]">
-                <span>{formatCoordinates(activeCanSatLat, activeCanSatLon)}</span>
-                <span className="text-[8.5px] px-1 py-0.2 bg-[var(--status-warning-bg)] border border-[var(--status-warning)]/40 rounded font-semibold">
+              <div className="flex items-center gap-1 font-bold tabular-nums text-[var(--status-warning)] truncate">
+                <span className="truncate">{formatCoordinates(activeCanSatLat, activeCanSatLon)}</span>
+                <span className="text-[8.5px] px-1 py-0.2 bg-[var(--status-warning-bg)] border border-[var(--status-warning)]/40 rounded font-semibold shrink-0">
                   LAST KNOWN (STALE)
                 </span>
               </div>
@@ -1070,10 +1070,10 @@ export const GpsTrackingMap: React.FC<GpsTrackingMapProps> = ({
               </span>
             )}
           </div>
-          <div className="flex gap-2 items-center">
-            <span className="text-[var(--text-tertiary)]">Est. Landing:</span>
+          <div className="flex gap-1.5 sm:gap-2 items-center truncate">
+            <span className="text-[var(--text-tertiary)] shrink-0">Est. Landing:</span>
             <span
-              className={`font-bold tabular-nums ${
+              className={`font-bold tabular-nums truncate ${
                 shouldDisplayPredictedOverlay(prediction, isStale, activeCanSatLat, activeCanSatLon)
                   ? 'text-[var(--accent-teal)]'
                   : 'text-[var(--status-warning)]'
@@ -1088,7 +1088,7 @@ export const GpsTrackingMap: React.FC<GpsTrackingMapProps> = ({
                 : `GATED (${isStale ? 'STALE_TELEMETRY' : prediction?.reason_code ?? 'NO_DATA'})`}
             </span>
           </div>
-          <div className="flex gap-2 items-center">
+          <div className="hidden sm:flex gap-2 items-center">
             <span className="text-[var(--text-tertiary)]">Baro / GNSS Alt:</span>
             <span className="text-[var(--text-primary)] font-bold tabular-nums">
               {typeof activeAlt === 'number' && Number.isFinite(activeAlt)
@@ -1097,7 +1097,7 @@ export const GpsTrackingMap: React.FC<GpsTrackingMapProps> = ({
               / {activeGpsAlt !== null ? `${activeGpsAlt.toFixed(1)}m` : 'NO FIX'}
             </span>
           </div>
-          <div className="flex justify-between items-center text-[9px] text-[var(--text-tertiary)] pt-0.5 border-t border-[var(--border-subtle)]">
+          <div className="hidden sm:flex justify-between items-center text-[9px] text-[var(--text-tertiary)] pt-0.5 border-t border-[var(--border-subtle)]">
             <span>Track Fixes / Source:</span>
             <span className="text-[var(--text-primary)] font-semibold tabular-nums flex items-center gap-1">
               <span>{validTrailPoints.length}</span>
@@ -1118,7 +1118,7 @@ export const GpsTrackingMap: React.FC<GpsTrackingMapProps> = ({
 
         {/* Top-Right Overlay: Target Range & Bearing */}
         {targetLat !== null && targetLon !== null && (
-          <div className="absolute top-2.5 right-2.5 bg-[var(--bg-surface-1)]/95 border border-[var(--border-subtle)] px-2.5 py-1.5 font-mono-data text-[10px] text-[var(--text-secondary)] flex flex-col gap-0.5 shadow-[var(--shadow-sm)] backdrop-blur-xs z-10 pointer-events-none rounded-[var(--radius-sm)]">
+          <div className="hidden sm:flex absolute top-2.5 right-2.5 bg-[var(--bg-surface-1)]/95 border border-[var(--border-subtle)] px-2.5 py-1.5 font-mono-data text-[10px] text-[var(--text-secondary)] flex-col gap-0.5 shadow-[var(--shadow-sm)] backdrop-blur-xs z-10 pointer-events-none rounded-[var(--radius-sm)]">
             <div className="flex gap-2 items-center">
               <Navigation className="w-3 h-3 text-[var(--status-nominal)]" />
               <span className="text-[var(--text-tertiary)]">Range:</span>
@@ -1143,11 +1143,11 @@ export const GpsTrackingMap: React.FC<GpsTrackingMapProps> = ({
         )}
 
         {/* Bottom-Right Overlay: Ground Station Reference */}
-        <div className="absolute bottom-6 right-2.5 bg-[var(--bg-surface-1)]/95 border border-[var(--border-subtle)] px-2.5 py-1 font-mono-data text-[10px] text-[var(--text-secondary)] flex items-center gap-1.5 shadow-[var(--shadow-xs)] backdrop-blur-xs z-10 pointer-events-none rounded-[var(--radius-xs)]">
-          <Radio className="w-3 h-3 text-[var(--accent-cobalt)]" />
-          <span>GS Base: {formatCoordinates(gsLat, gsLon)}</span>
+        <div className="absolute bottom-6 right-2 sm:right-2.5 bg-[var(--bg-surface-1)]/95 border border-[var(--border-subtle)] px-2 py-0.5 sm:px-2.5 sm:py-1 font-mono-data text-[9px] sm:text-[10px] text-[var(--text-secondary)] flex items-center gap-1.5 shadow-[var(--shadow-xs)] backdrop-blur-xs z-10 pointer-events-none rounded-[var(--radius-xs)]">
+          <Radio className="w-3 h-3 text-[var(--accent-cobalt)] shrink-0" />
+          <span className="truncate">GS Base: {formatCoordinates(gsLat, gsLon)}</span>
           {distanceToGsMeters !== null && (
-            <span className="text-[var(--text-primary)] font-semibold tabular-nums">
+            <span className="text-[var(--text-primary)] font-semibold tabular-nums shrink-0">
               (
               {distanceToGsMeters < 1000
                 ? `${distanceToGsMeters.toFixed(0)}m`

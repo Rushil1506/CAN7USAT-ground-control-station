@@ -223,3 +223,102 @@ select:focus-visible {
   padding: 2px 6px !important;
   box-shadow: var(--shadow-xs);
 }
+
+/* Field-operations mobile & touch responsive utilities */
+.pb-safe {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+.touch-target {
+  touch-action: manipulation;
+}
+
+/* Container-query responsive layout for Complete Subsystem & Sensor Readout Matrix */
+.raw-readouts-container {
+  container-type: inline-size;
+  container-name: readout-matrix;
+  width: 100%;
+  min-width: 0;
+}
+
+.raw-readouts-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0.75rem;
+  min-width: 0;
+}
+
+@container readout-matrix (min-width: 560px) {
+  .raw-readouts-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.875rem;
+  }
+}
+
+@container readout-matrix (min-width: 1120px) {
+  .raw-readouts-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 0.875rem;
+  }
+}
+
+.raw-readout-card {
+  min-width: 0;
+  overflow: hidden;
+}
+
+.raw-readout-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  column-gap: 0.625rem;
+  row-gap: 0.125rem;
+  min-width: 0;
+}
+
+.raw-readout-label {
+  min-width: 0;
+  flex: 1 1 8.5rem;
+  overflow-wrap: break-word;
+  word-break: break-word;
+  line-height: 1.35;
+}
+
+.raw-readout-value {
+  min-width: 0;
+  max-width: 100%;
+  margin-left: auto;
+  text-align: right;
+  overflow-wrap: break-word;
+  word-break: break-word;
+  line-height: 1.35;
+}
+
+/* Mobile landscape optimization (short viewports < 500px height on phones) */
+@media (max-width: 1023px) and (max-height: 500px) and (orientation: landscape) {
+  .mobile-landscape-compact-header {
+    height: auto !important;
+    padding-top: 0.25rem !important;
+    padding-bottom: 0.25rem !important;
+  }
+
+  .mobile-landscape-hide-status-row {
+    display: none !important;
+  }
+
+  .mobile-landscape-compact-nav {
+    height: 2.35rem !important;
+  }
+
+  .mobile-landscape-grid-2 {
+    display: grid !important;
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    gap: 0.5rem !important;
+  }
+
+  .mobile-landscape-viewport-tall {
+    height: 240px !important;
+    min-height: 220px !important;
+  }
+}

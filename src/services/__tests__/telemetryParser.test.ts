@@ -4,10 +4,15 @@ import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import {
   convertGnssUtcToIst,
+  deriveSteeringFromServos,
   evaluateGpsValidity,
   formatComputerTimeOfDayUtc,
+  FSW_TELEMETRY_KEYS,
+  FSW_V2_TELEMETRY_KEYS,
   LIVE_TELEMETRY_TEAM_ID,
+  mapFirmwareStateIndex,
   mapTransmitterStateToCode,
+  parseFirmwareControlLine,
   parseTelemetryLine,
   SerialLineBuffer,
 } from '../telemetryParser';
@@ -501,4 +506,278 @@ describe('CAN-7USAT Flat-Sat Telemetry Dataset & Hardware Compatibility', () => 
     }
   });
 });
+
+describe('CAN7USAT_FSW.ino 24-Field KEY=VALUE & SD CSV Contract Verification', () => {
+  const SAMPLE_FSW_KV_PAD_NO_FIX =
+    'TEAM_ID=2026-IN-SPACe-CAN-7USAT-017,MISSION_TIME_S=4,PACKET_COUNT=4,BARO_ALT_M=0.12,PRESSURE_PA=100845.20,BARO_TEMP_C=27.45,BATTERY_V=8.18,GPS_TIME_UTC=UNAVAILABLE,LAT_DEG=0.0000000,LON_DEG=0.0000000,GPS_ALT_MSL_M=0.00,SATELLITES=0,ACCEL_X_MPS2=0.042,ACCEL_Y_MPS2=-0.018,ACCEL_Z_MPS2=9.805,ROLL_DEG=0.45,PITCH_DEG=-0.30,GYRO_Z_RADPS=0.0012,LEFT_SERVO_DEG=90.0,RIGHT_SERVO_DEG=90.0,BURNWIRE_MOSFET=0,BUZZER_MOSFET=0,FLYWHEEL_RPM=0,FLIGHT_STATE=LAUNCH_PAD';
+
+  const SAMPLE_FSW_KV_GUIDED =
+    'TEAM_ID=2026-IN-SPACe-CAN-7USAT-017,MISSION_TIME_S=92,PACKET_COUNT=92,BARO_ALT_M=540.80,PRESSURE_PA=94920.50,BARO_TEMP_C=23.10,BATTERY_V=7.84,GPS_TIME_UTC=14:22:09,LAT_DEG=13.3525120,LON_DEG=74.7928350,GPS_ALT_MSL_M=595.80,SATELLITES=9,ACCEL_X_MPS2=0.310,ACCEL_Y_MPS2=-0.220,ACCEL_Z_MPS2=9.760,ROLL_DEG=3.25,PITCH_DEG=-1.85,GYRO_Z_RADPS=1.4250,LEFT_SERVO_DEG=90.0,RIGHT_SERVO_DEG=45.0,BURNWIRE_MOSFET=0,BUZZER_MOSFET=0,FLYWHEEL_RPM=6000,FLIGHT_STATE=PRECISION_GUIDE';
+
+  it('parses 24-field KEY=VALUE pre-lock frame with GPS_TIME_UTC=UNAVAILABLE and gates (0,0) coordinates', () => {
+    const res = parseTelemetryLine(SAMPLE_FSW_KV_PAD_NO_FIX, 1700000004000);
+    assert.equal(res.ok, true);
+    if (!res.ok) return;
+
+    const p = res.packet;
+    assert.strictEqual(p.packetFormat, 'FSW_KV_24');
+    assert.strictEqual(p.teamId, LIVE_TELEMETRY_TEAM_ID);
+    assert.strictEqual(p.missionTimeSeconds, 4);
+    assert.strictEqual(p.packetNumber, 4);
+    assert.strictEqual(p.altitude, 0.12);
+    assert.strictEqual(p.rawPressurePa, 100845.2);
+    assert.ok(Math.abs(p.pressure! - 1008.452) < 1e-6);
+    assert.strictEqual(p.temperature, 27.45);
+    assert.strictEqual(p.batteryVoltage, 8.18);
+    assert.strictEqual(p.timestampUtc, 'UNAVAILABLE');
+    assert.strictEqual(p.gnssTimeIst, null);
+    assert.strictEqual(p.gpsValid, false);
+    assert.strictEqual(p.gpsFixType, 'NO_FIX');
+    assert.strictEqual(p.latitude, null);
+    assert.strictEqual(p.longitude, null);
+    assert.strictEqual(p.gpsAltitude, null);
+    assert.strictEqual(p.gpsSats, 0);
+    assert.strictEqual(p.leftServoDeg, 90.0);
+    assert.strictEqual(p.rightServoDeg, 90.0);
+    assert.strictEqual(p.derivedSteering, 0);
+    assert.strictEqual(p.burnwireActive, false);
+    assert.strictEqual(p.buzzerMosfet, false);
+    assert.strictEqual(p.audioBeaconActive, false);
+    assert.strictEqual(p.wheelRpm, 0);
+    assert.strictEqual(p.fswStateName, 'LAUNCH_PAD');
+    assert.strictEqual(p.stateCode, FlightStateCode.LAUNCH_PAD);
+    assert.strictEqual(p.fswStateIndex, 1);
+  });
+
+  it('parses 24-field KEY=VALUE guided descent frame with actuator states, 6000 RPM flywheel, and derived steering', () => {
+    const res = parseTelemetryLine(SAMPLE_FSW_KV_GUIDED, 1700000092000);
+    assert.equal(res.ok, true);
+    if (!res.ok) return;
+
+    const p = res.packet;
+    assert.strictEqual(p.packetFormat, 'FSW_KV_24');
+    assert.strictEqual(p.timestampUtc, '14:22:09');
+    assert.strictEqual(p.gnssTimeIst, '19:52:09');
+    assert.strictEqual(p.gpsValid, true);
+    assert.strictEqual(p.gpsFixType, '3D');
+    assert.strictEqual(p.latitude, 13.352512);
+    assert.strictEqual(p.longitude, 74.792835);
+    assert.strictEqual(p.gpsAltitude, 595.8);
+    assert.strictEqual(p.gpsSats, 9);
+    assert.strictEqual(p.roll, 3.25);
+    assert.strictEqual(p.pitch, -1.85);
+    assert.strictEqual(p.spinRate, 1.425);
+    assert.strictEqual(p.gyroZRadps, 1.425);
+    assert.strictEqual(p.yaw, null);
+    assert.strictEqual(p.leftServoDeg, 90.0);
+    assert.strictEqual(p.rightServoDeg, 45.0);
+    assert.strictEqual(p.derivedSteering, 0.5);
+    assert.strictEqual(p.burnwireActive, false);
+    assert.strictEqual(p.buzzerMosfet, false);
+    assert.strictEqual(p.wheelRpm, 6000);
+    assert.strictEqual(p.fswStateName, 'PRECISION_GUIDE');
+    assert.strictEqual(p.stateCode, FlightStateCode.PRECISION_GUIDANCE);
+    assert.strictEqual(p.fswStateIndex, 5);
+  });
+
+  it('parses 24-field positional CSV lines from logDataToSD() and ignores the SD CSV header row', () => {
+    const headerRow = FSW_TELEMETRY_KEYS.join(',');
+    const headerRes = parseTelemetryLine(headerRow);
+    assert.equal(headerRes.ok, false);
+
+    const sdCsvRow =
+      '2026-IN-SPACe-CAN-7USAT-017,75,75,698.40,93120.00,22.40,7.92,14:21:52,13.3524000,74.7927000,753.40,8,0.120,-0.080,9.810,1.20,-0.90,0.4500,90.0,90.0,1,0,0,PARAFOIL_DEPLOY';
+    const res = parseTelemetryLine(sdCsvRow, 1700000075000);
+    assert.equal(res.ok, true);
+    if (!res.ok) return;
+
+    assert.strictEqual(res.packet.packetFormat, 'FSW_CSV_24');
+    assert.strictEqual(res.packet.burnwireActive, true);
+    assert.strictEqual(res.packet.buzzerMosfet, false);
+    assert.strictEqual(res.packet.wheelRpm, 0);
+    assert.strictEqual(res.packet.fswStateName, 'PARAFOIL_DEPLOY');
+    assert.strictEqual(res.packet.stateCode, FlightStateCode.PARAFOIL_DEPLOYMENT);
+    assert.strictEqual(res.packet.fswStateIndex, 4);
+  });
+
+  it('maps all 10 firmware states (wire names & enum names) and keeps UNKNOWN unmapped', () => {
+    const expectedMappings: Array<{
+      name: string;
+      code: FlightStateCode;
+      fswIdx: number;
+    }> = [
+      { name: 'BOOT', code: FlightStateCode.BOOT, fswIdx: 0 },
+      { name: 'LAUNCH_PAD', code: FlightStateCode.LAUNCH_PAD, fswIdx: 1 },
+      { name: 'ASCENT', code: FlightStateCode.ASCENT, fswIdx: 2 },
+      { name: 'DROGUE_DESCENT', code: FlightStateCode.DESCENT, fswIdx: 3 },
+      { name: 'PARAFOIL_DEPLOY', code: FlightStateCode.PARAFOIL_DEPLOYMENT, fswIdx: 4 },
+      { name: 'PARAFOIL_DEPLOYMENT', code: FlightStateCode.PARAFOIL_DEPLOYMENT, fswIdx: 4 },
+      { name: 'PRECISION_GUIDE', code: FlightStateCode.PRECISION_GUIDANCE, fswIdx: 5 },
+      { name: 'PRECISION_GUIDANCE', code: FlightStateCode.PRECISION_GUIDANCE, fswIdx: 5 },
+      { name: 'TERMINAL_LOITER', code: FlightStateCode.TERMINAL_GUIDANCE, fswIdx: 6 },
+      { name: 'TERMINAL_GUIDANCE', code: FlightStateCode.TERMINAL_GUIDANCE, fswIdx: 6 },
+      { name: 'FINAL_APPROACH', code: FlightStateCode.FINAL_APPROACH, fswIdx: 7 },
+      { name: 'LANDED', code: FlightStateCode.IMPACT, fswIdx: 8 },
+      { name: 'LANDING', code: FlightStateCode.IMPACT, fswIdx: 8 },
+      { name: 'FAILSAFE', code: FlightStateCode.FAILSAFE, fswIdx: 9 },
+    ];
+
+    for (const item of expectedMappings) {
+      assert.strictEqual(mapTransmitterStateToCode(item.name), item.code, `State code mismatch for ${item.name}`);
+      assert.strictEqual(mapFirmwareStateIndex(item.name), item.fswIdx, `FSW index mismatch for ${item.name}`);
+    }
+
+    assert.strictEqual(mapTransmitterStateToCode('UNKNOWN'), null);
+    assert.strictEqual(mapFirmwareStateIndex('UNKNOWN'), null);
+  });
+
+  it('rejects 24-field KEY=VALUE lines with out-of-order or unknown keys or non-binary MOSFET flags', () => {
+    const wrongKeyLine = SAMPLE_FSW_KV_GUIDED.replace('LEFT_SERVO_DEG=90.0', 'WRONG_KEY=90.0');
+    const resWrongKey = parseTelemetryLine(wrongKeyLine);
+    assert.equal(resWrongKey.ok, false);
+
+    const invalidMosfetLine = SAMPLE_FSW_KV_GUIDED.replace('BURNWIRE_MOSFET=0', 'BURNWIRE_MOSFET=2');
+    const resBadMosfet = parseTelemetryLine(invalidMosfetLine);
+    assert.equal(resBadMosfet.ok, false);
+  });
+
+  it('parses firmware ACK and ERR control lines via parseFirmwareControlLine and derives servo steering', () => {
+    assert.strictEqual(deriveSteeringFromServos(90, 90), 0);
+    assert.strictEqual(deriveSteeringFromServos(0, 90), -1);
+    assert.strictEqual(deriveSteeringFromServos(90, 0), 1);
+
+    const gpsAck = parseFirmwareControlLine(
+      'ACK:TARGET_GPS=13.3490000,74.7921000,EAST_M=-75.4,NORTH_M=-389.2\r\n'
+    );
+    assert.ok(gpsAck !== null);
+    assert.strictEqual(gpsAck?.kind, 'ACK');
+    assert.strictEqual(gpsAck?.category, 'TARGET_GPS');
+    assert.strictEqual(gpsAck?.targetLatDeg, 13.349);
+    assert.strictEqual(gpsAck?.targetLonDeg, 74.7921);
+
+    const stateAck = parseFirmwareControlLine('ACK:STATE=PRECISION_GUIDE');
+    assert.ok(stateAck !== null);
+    assert.strictEqual(stateAck?.category, 'STATE');
+    assert.strictEqual(stateAck?.stateName, 'PRECISION_GUIDE');
+
+    const errMsg = parseFirmwareControlLine('ERR:TARGET_GPS_INVALID');
+    assert.ok(errMsg !== null);
+    assert.strictEqual(errMsg?.kind, 'ERR');
+    assert.strictEqual(errMsg?.category, 'TARGET_GPS');
+
+    assert.strictEqual(parseFirmwareControlLine(SAMPLE_FSW_KV_GUIDED), null);
+  });
+});
+
+describe('flight-software-integrated/CAN7USAT_FSW.ino 32-Field v2 Continuous-Rotation Spool Telemetry Contract', () => {
+  const SAMPLE_FSW_V2_KV_UNCAL_LOCKED =
+    'TEAM_ID=2026-IN-SPACe-CAN-7USAT-017,MISSION_TIME_S=14,PACKET_COUNT=14,BARO_ALT_M=0.10,PRESSURE_PA=100850.00,BARO_TEMP_C=27.50,BATTERY_V=8.16,GPS_TIME_UTC=UNAVAILABLE,LAT_DEG=0.0000000,LON_DEG=0.0000000,GPS_ALT_MSL_M=0.00,SATELLITES=0,ACCEL_X_MPS2=0.020,ACCEL_Y_MPS2=-0.010,ACCEL_Z_MPS2=9.806,ROLL_DEG=0.20,PITCH_DEG=-0.15,GYRO_Z_RADPS=0.0005,LEFT_BRAKE_CMD=0.000,RIGHT_BRAKE_CMD=0.000,LEFT_SPOOL_DIR=STOP,RIGHT_SPOOL_DIR=STOP,LEFT_SERVO_US=1500,RIGHT_SERVO_US=1500,LEFT_EST_PULL_MM=UNCAL,RIGHT_EST_PULL_MM=UNCAL,ACTUATOR_CAL=UNCAL_LOCKED,ACTUATOR_FAULT=UNCALIBRATED,BURNWIRE_MOSFET=0,BUZZER_MOSFET=0,FLYWHEEL_RPM=0,FLIGHT_STATE=LAUNCH_PAD';
+
+  const SAMPLE_FSW_V2_KV_CALIBRATED_GUIDED =
+    'TEAM_ID=2026-IN-SPACe-CAN-7USAT-017,MISSION_TIME_S=98,PACKET_COUNT=98,BARO_ALT_M=485.20,PRESSURE_PA=95410.00,BARO_TEMP_C=22.80,BATTERY_V=7.78,GPS_TIME_UTC=14:22:15,LAT_DEG=13.3526100,LON_DEG=74.7929100,GPS_ALT_MSL_M=540.20,SATELLITES=10,ACCEL_X_MPS2=0.180,ACCEL_Y_MPS2=-0.140,ACCEL_Z_MPS2=9.790,ROLL_DEG=2.10,PITCH_DEG=-1.40,GYRO_Z_RADPS=1.1800,LEFT_BRAKE_CMD=0.000,RIGHT_BRAKE_CMD=0.500,LEFT_SPOOL_DIR=STOP,RIGHT_SPOOL_DIR=WIND,LEFT_SERVO_US=1500,RIGHT_SERVO_US=1360,LEFT_EST_PULL_MM=0.0,RIGHT_EST_PULL_MM=4.0,ACTUATOR_CAL=CALIBRATED,ACTUATOR_FAULT=NONE,BURNWIRE_MOSFET=0,BUZZER_MOSFET=0,FLYWHEEL_RPM=6000,FLIGHT_STATE=PRECISION_GUIDE';
+
+  it('parses 32-field KEY=VALUE v2 frame in default UNCAL_LOCKED state without fabricating servo degrees or pull mm', () => {
+    const res = parseTelemetryLine(SAMPLE_FSW_V2_KV_UNCAL_LOCKED, 1700000014000);
+    assert.equal(res.ok, true);
+    if (!res.ok) return;
+
+    const p = res.packet;
+    assert.strictEqual(p.packetFormat, 'FSW_KV_32');
+    assert.strictEqual(p.leftServoDeg, null);
+    assert.strictEqual(p.rightServoDeg, null);
+    assert.strictEqual(p.leftBrakeCmd, 0);
+    assert.strictEqual(p.rightBrakeCmd, 0);
+    assert.strictEqual(p.derivedSteering, 0);
+    assert.strictEqual(p.leftSpoolDir, 'STOP');
+    assert.strictEqual(p.rightSpoolDir, 'STOP');
+    assert.strictEqual(p.leftServoUs, 1500);
+    assert.strictEqual(p.rightServoUs, 1500);
+    assert.strictEqual(p.leftEstPullMm, null);
+    assert.strictEqual(p.rightEstPullMm, null);
+    assert.strictEqual(p.actuatorCalStatus, 'UNCAL_LOCKED');
+    assert.strictEqual(p.actuatorFault, 'UNCALIBRATED');
+    assert.strictEqual(p.burnwireActive, false);
+    assert.strictEqual(p.buzzerMosfet, false);
+    assert.strictEqual(p.wheelRpm, 0);
+    assert.strictEqual(p.fswStateName, 'LAUNCH_PAD');
+    assert.strictEqual(p.stateCode, FlightStateCode.LAUNCH_PAD);
+  });
+
+  it('parses 32-field KEY=VALUE v2 frame in CALIBRATED guided descent with open-loop pull estimates and PWM us', () => {
+    const res = parseTelemetryLine(SAMPLE_FSW_V2_KV_CALIBRATED_GUIDED, 1700000098000);
+    assert.equal(res.ok, true);
+    if (!res.ok) return;
+
+    const p = res.packet;
+    assert.strictEqual(p.packetFormat, 'FSW_KV_32');
+    assert.strictEqual(p.leftServoDeg, null);
+    assert.strictEqual(p.rightServoDeg, null);
+    assert.strictEqual(p.leftBrakeCmd, 0);
+    assert.strictEqual(p.rightBrakeCmd, 0.5);
+    assert.strictEqual(p.derivedSteering, 0.5);
+    assert.strictEqual(p.leftSpoolDir, 'STOP');
+    assert.strictEqual(p.rightSpoolDir, 'WIND');
+    assert.strictEqual(p.leftServoUs, 1500);
+    assert.strictEqual(p.rightServoUs, 1360);
+    assert.strictEqual(p.leftEstPullMm, 0);
+    assert.strictEqual(p.rightEstPullMm, 4.0);
+    assert.strictEqual(p.actuatorCalStatus, 'CALIBRATED');
+    assert.strictEqual(p.actuatorFault, 'NONE');
+    assert.strictEqual(p.wheelRpm, 6000);
+    assert.strictEqual(p.fswStateName, 'PRECISION_GUIDE');
+    assert.strictEqual(p.stateCode, FlightStateCode.PRECISION_GUIDANCE);
+  });
+
+  it('parses 32-field positional CSV lines from logDataToSD() and ignores the 32-field CSV header row', () => {
+    const headerRow = FSW_V2_TELEMETRY_KEYS.join(',');
+    assert.equal(parseTelemetryLine(headerRow).ok, false);
+
+    const sdCsv32Row =
+      '2026-IN-SPACe-CAN-7USAT-017,99,99,480.00,95450.00,22.70,7.77,14:22:16,13.3526200,74.7929200,535.00,10,0.150,-0.120,9.800,1.80,-1.10,1.1000,0.250,0.000,RELEASE,STOP,1605,1500,2.5,0.0,CALIBRATED,BURST_CAP_REACHED,0,0,6000,TERMINAL_LOITER';
+    const res = parseTelemetryLine(sdCsv32Row, 1700000099000);
+    assert.equal(res.ok, true);
+    if (!res.ok) return;
+
+    const p = res.packet;
+    assert.strictEqual(p.packetFormat, 'FSW_CSV_32');
+    assert.strictEqual(p.leftBrakeCmd, 0.25);
+    assert.strictEqual(p.rightBrakeCmd, 0);
+    assert.strictEqual(p.derivedSteering, -0.25);
+    assert.strictEqual(p.leftSpoolDir, 'RELEASE');
+    assert.strictEqual(p.rightSpoolDir, 'STOP');
+    assert.strictEqual(p.leftServoUs, 1605);
+    assert.strictEqual(p.rightServoUs, 1500);
+    assert.strictEqual(p.leftEstPullMm, 2.5);
+    assert.strictEqual(p.rightEstPullMm, 0);
+    assert.strictEqual(p.actuatorCalStatus, 'CALIBRATED');
+    assert.strictEqual(p.actuatorFault, 'BURST_CAP_REACHED');
+    assert.strictEqual(p.fswStateName, 'TERMINAL_LOITER');
+    assert.strictEqual(p.stateCode, FlightStateCode.TERMINAL_GUIDANCE);
+  });
+
+  it('rejects malformed v2 spool direction, out-of-range brake command, or invalid calibration status', () => {
+    const badDir = SAMPLE_FSW_V2_KV_CALIBRATED_GUIDED.replace('RIGHT_SPOOL_DIR=WIND', 'RIGHT_SPOOL_DIR=SPIN');
+    assert.equal(parseTelemetryLine(badDir).ok, false);
+
+    const badBrake = SAMPLE_FSW_V2_KV_CALIBRATED_GUIDED.replace('RIGHT_BRAKE_CMD=0.500', 'RIGHT_BRAKE_CMD=1.500');
+    assert.equal(parseTelemetryLine(badBrake).ok, false);
+
+    const badCal = SAMPLE_FSW_V2_KV_CALIBRATED_GUIDED.replace('ACTUATOR_CAL=CALIBRATED', 'ACTUATOR_CAL=UNKNOWN');
+    assert.equal(parseTelemetryLine(badCal).ok, false);
+  });
+
+  it('parses ACK:SPOOL= and ERR:SPOOL= control responses from flight-software-integrated', () => {
+    const spoolAck = parseFirmwareControlLine('ACK:SPOOL=ZERO_NEUTRAL');
+    assert.ok(spoolAck !== null);
+    assert.strictEqual(spoolAck?.kind, 'ACK');
+    assert.strictEqual(spoolAck?.category, 'SPOOL');
+    assert.strictEqual(spoolAck?.payload, 'SPOOL=ZERO_NEUTRAL');
+
+    const spoolErr = parseFirmwareControlLine('ERR:SPOOL=JOG_REJECTED');
+    assert.ok(spoolErr !== null);
+    assert.strictEqual(spoolErr?.kind, 'ERR');
+    assert.strictEqual(spoolErr?.category, 'SPOOL');
+  });
+});
+
 

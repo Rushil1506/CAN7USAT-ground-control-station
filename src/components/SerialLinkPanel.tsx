@@ -257,13 +257,40 @@ export const SerialLinkPanel: React.FC<SerialLinkPanelProps> = ({
                 type="button"
                 onClick={onConnectLiveSerial}
                 disabled={isLiveConnecting || serialState === 'UNSUPPORTED'}
+                title={
+                  serialState === 'UNSUPPORTED'
+                    ? 'Web Serial API is not supported in this browser/device. Direct USB connection requires desktop Chrome or Edge.'
+                    : 'Open USB Serial Port'
+                }
                 className="flex-1 go-button font-mono-data text-[10px] font-bold px-2.5 h-7 border border-[var(--border-amber)] transition-colors cursor-pointer flex items-center justify-center gap-1 rounded-[var(--radius-sm)] uppercase disabled:opacity-40 disabled:cursor-not-allowed"
               >
                 <Usb className="w-3 h-3" />
-                <span>{isLiveConnecting ? 'OPENING PORT...' : 'CONNECT USB SERIAL'}</span>
+                <span>
+                  {serialState === 'UNSUPPORTED'
+                    ? 'WEB SERIAL UNSUPPORTED'
+                    : isLiveConnecting
+                    ? 'OPENING PORT...'
+                    : 'CONNECT USB SERIAL'}
+                </span>
               </button>
             )}
           </div>
+
+          {/* Unsupported Web Serial Environment Notice */}
+          {serialState === 'UNSUPPORTED' && (
+            <div
+              role="status"
+              className="p-2 bg-[var(--status-warning-bg)] border border-[var(--status-warning)]/40 rounded-[var(--radius-xs)] font-mono-data text-[9px] text-[var(--status-warning)] leading-snug space-y-1"
+            >
+              <div className="flex items-center gap-1 font-bold">
+                <ShieldAlert className="w-3.5 h-3.5 shrink-0" />
+                <span>WEB SERIAL NOT SUPPORTED ON THIS BROWSER</span>
+              </div>
+              <p className="text-[9px] text-[var(--text-secondary)]">
+                Direct USB-Serial reception requires desktop Chromium (Chrome/Edge) with the LoRa receiver plugged into your machine. Cloud web hosting serves the frontend interface, but does not provide remote wireless telemetry without a dedicated cloud relay.
+              </p>
+            </div>
+          )}
 
           {/* Error / Unsupported Banner */}
           {serialMetrics.lastError && (
@@ -352,6 +379,11 @@ export const SerialLinkPanel: React.FC<SerialLinkPanelProps> = ({
                 {serialMetrics.rawBytesReceived}
               </span>
             </div>
+          </div>
+
+          {/* FSW Wire Contract Note */}
+          <div className="px-2 py-1 bg-[var(--bg-base)] border border-[var(--border-subtle)] rounded-[var(--radius-xs)] text-[9px] font-mono-data text-[var(--text-tertiary)] leading-tight">
+            FSW Contract: 24-field <span className="text-[var(--text-secondary)]">KEY=VALUE</span> @ 1Hz (115200 8N1; awaits <span className="text-[var(--text-secondary)]">START</span> on LoRa; <span className="text-[var(--text-secondary)]">ACK:</span> logged).
           </div>
         </>
       )}

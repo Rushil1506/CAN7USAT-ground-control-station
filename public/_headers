@@ -1,0 +1,19 @@
+# Cloudflare Pages Custom Security & Caching Headers
+
+# Root & All HTML Documents: Always revalidate to ensure immediate updates upon new deployments
+/*
+  X-Content-Type-Options: nosniff
+  X-Frame-Options: SAMEORIGIN
+  Referrer-Policy: strict-origin-when-cross-origin
+  Permissions-Policy: serial=(self)
+
+/index.html
+  Cache-Control: public, max-age=0, must-revalidate
+
+# Hashed Assets: Cache immutably for 1 year
+/assets/*
+  Cache-Control: public, max-age=31536000, immutable
+
+# CAD 3D Models: Cache with stale-while-revalidate
+/models/*
+  Cache-Control: public, max-age=604800, stale-while-revalidate=86400

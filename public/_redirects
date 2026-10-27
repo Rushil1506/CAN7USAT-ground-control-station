@@ -1,0 +1,3 @@
+# Cloudflare Pages SPA Client-Side Routing Fallback
+# Serves index.html with HTTP 200 for any route/refresh, preserving React client-side tab & route state
+/*    /index.html   200

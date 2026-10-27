@@ -11,7 +11,8 @@ import {
   ShieldAlert,
   Terminal,
 } from 'lucide-react';
-import { HeaderBar } from './components/HeaderBar';
+import { HeaderBar, MobileWorkspaceNav } from './components/HeaderBar';
+import { MobileFieldOpsDeck } from './components/MobileFieldOpsDeck';
 import { TelemetryChartPanel } from './components/TelemetryChartPanel';
 import { ThreeAttitudeViewport } from './components/ThreeAttitudeViewport';
 import { GpsTrackingMap } from './components/GpsTrackingMap';
@@ -296,6 +297,23 @@ export default function App() {
               time: timeStr,
               text: `${rawLine}  [REJECTED: ${reason}]`,
               type: 'err',
+              source: 'LIVE_SERIAL',
+            },
+          ];
+          if (next.length > 300) next.shift();
+          return next;
+        });
+      },
+      onControlMessage: (control, rawLine) => {
+        const now = new Date();
+        const timeStr = now.toISOString().split('T')[1].slice(0, 8);
+        setRawLogs((prev) => {
+          const next: RawLogEntry[] = [
+            ...prev,
+            {
+              time: timeStr,
+              text: `[FSW_${control.kind}:${control.category}] ${rawLine}`,
+              type: control.kind === 'ERR' ? 'err' : 'sys',
               source: 'LIVE_SERIAL',
             },
           ];
@@ -665,9 +683,37 @@ export default function App() {
               </div>
             )}
 
-            {/* Top Mission Health & Landing Predictor Status Summary Strip */}
+            {/* Mobile & Tablet Field Operations Priority Deck (< lg) */}
+            <MobileFieldOpsDeck
+              latestPacket={activeLatestPacket}
+              historyPackets={activeHistoryPackets}
+              telemetrySource={telemetrySource}
+              onSelectSource={handleSelectSource}
+              serialState={serialState}
+              serialMetrics={serialMetrics}
+              liveBaudRate={liveBaudRate}
+              onChangeBaudRate={setLiveBaudRate}
+              onConnectSerial={handleConnectLiveSerial}
+              onDisconnectSerial={handleDisconnectLiveSerial}
+              isStale={isLiveStale}
+              packetAgeSeconds={packetAgeSeconds}
+              isSimulating={isRunning}
+              onToggleSimulation={handleTogglePlay}
+              onResetSimulation={handleResetSimulation}
+              onCalibrateSensors={handleCalibrateSensors}
+              onInjectDisturbance={handleInjectTurbulence}
+              onForceState={handleOverrideState}
+              targetLat={predictorConfig.target_lat_deg}
+              targetLon={predictorConfig.target_lon_deg}
+              onUpdateTarget={handleUpdateSharedTarget}
+              landingPrediction={overviewPrediction}
+              onOpenLandingPredictor={() => setActiveTab('LANDING_PREDICTOR')}
+              optionalTelemetrySettings={optionalTelemetrySettings}
+            />
+
+            {/* Top Mission Health & Landing Predictor Status Summary Strip (Desktop >= lg) */}
             {showStrip && (
-              <div className={`grid ${stripColsClass} gap-2 shrink-0`}>
+              <div className={`hidden lg:grid ${stripColsClass} gap-2 shrink-0`}>
                 {showMissionStrip && (
                   <>
                     {/* 1. Flight Phase */}
@@ -840,14 +886,14 @@ export default function App() {
               <div className="flex-1 flex flex-col lg:flex-row gap-2.5 lg:overflow-hidden min-h-0 min-w-0">
                 {/* Left & Center Main Column */}
                 {showLeftColumn && (
-                  <div className="w-full lg:flex-1 min-w-0 flex flex-col gap-2.5 lg:overflow-hidden min-h-[460px] lg:min-h-0 lg:h-full">
+                  <div className="w-full lg:flex-1 min-w-0 flex flex-col gap-2.5 lg:overflow-hidden lg:min-h-0 lg:h-full">
                     {/* Primary Operational Area: GPS Tracking Map with Live Prediction & Target Vector */}
                     {showMap && (
                       <div
                         className={
                           showSecondaryRow
-                            ? 'flex-[1.25] min-h-[220px] min-w-0 overflow-hidden'
-                            : 'flex-1 min-h-[300px] min-w-0 overflow-hidden'
+                            ? 'h-[280px] sm:h-[320px] lg:h-auto lg:flex-[1.25] min-h-[220px] min-w-0 overflow-hidden shrink-0 lg:shrink'
+                            : 'h-[320px] sm:h-[380px] lg:h-auto lg:flex-1 min-h-[300px] min-w-0 overflow-hidden shrink-0 lg:shrink'
                         }
                       >
                         <GpsTrackingMap
@@ -871,14 +917,16 @@ export default function App() {
                       <div
                         className={`${
                           showMap
-                            ? 'flex-1 min-h-[190px]'
-                            : 'flex-1 min-h-[260px]'
+                            ? 'lg:flex-1 lg:min-h-[190px]'
+                            : 'lg:flex-1 lg:min-h-[260px]'
                         } grid grid-cols-1 ${
-                          showAttitude && showCharts ? 'md:grid-cols-2' : 'grid-cols-1'
-                        } gap-2.5 min-h-0 min-w-0 overflow-hidden`}
+                          showAttitude && showCharts
+                            ? 'sm:grid-cols-2 md:grid-cols-2'
+                            : 'grid-cols-1'
+                        } gap-2.5 min-h-0 min-w-0 lg:overflow-hidden shrink-0 lg:shrink`}
                       >
                         {showAttitude && (
-                          <div className="h-full min-h-0 min-w-0 overflow-hidden">
+                          <div className="h-[270px] sm:h-[260px] lg:h-full min-h-0 min-w-0 overflow-hidden">
                             <ThreeAttitudeViewport
                               latestPacket={activeLatestPacket}
                               telemetrySource={telemetrySource}
@@ -887,7 +935,7 @@ export default function App() {
                           </div>
                         )}
                         {showCharts && (
-                          <div className="h-full min-h-0 min-w-0 overflow-hidden">
+                          <div className="h-[260px] sm:h-[260px] lg:h-full min-h-0 min-w-0 overflow-hidden">
                             <TelemetryChartPanel
                               history={activeHistoryPackets}
                               latestPacket={activeLatestPacket}
@@ -907,61 +955,69 @@ export default function App() {
                 {showRightRail && (
                   <div
                     className={`w-full ${
-                      showLeftColumn ? 'lg:w-[320px] xl:w-[360px]' : 'lg:max-w-xl mx-auto'
-                    } shrink-0 flex flex-col gap-2.5 lg:overflow-y-auto lg:h-full pr-1 pb-2 lg:pb-0 min-h-0 min-w-0`}
+                      showLeftColumn ? 'lg:w-[340px] xl:w-[380px]' : 'lg:flex-1'
+                    } shrink-0 grid grid-cols-1 md:grid-cols-2 lg:flex lg:flex-col gap-2.5 lg:overflow-y-auto lg:h-full pr-0.5 lg:pr-1 pb-2 lg:pb-0 min-h-0 min-w-0 items-stretch`}
                   >
                     {/* 1. Secondary: Flight Phase & State Machine Progression */}
                     {showFlightState && (
-                      <FlightStatePanel
-                        latestPacket={activeLatestPacket}
-                        telemetrySource={telemetrySource}
-                        isStale={isLiveStale}
-                        onOverrideState={handleOverrideState}
-                      />
+                      <div className="w-full min-w-0 shrink-0">
+                        <FlightStatePanel
+                          latestPacket={activeLatestPacket}
+                          telemetrySource={telemetrySource}
+                          isStale={isLiveStale}
+                          onOverrideState={handleOverrideState}
+                        />
+                      </div>
                     )}
 
                     {/* 2. Secondary: Raw Sensor Readouts & Electrical Metrics */}
                     {showRawReadouts && (
-                      <RawReadoutsPanel
-                        latestPacket={activeLatestPacket}
-                        historyPackets={activeHistoryPackets}
-                        telemetrySource={telemetrySource}
-                        isStale={isLiveStale}
-                        optionalTelemetrySettings={optionalTelemetrySettings}
-                      />
+                      <div className="w-full min-w-0 shrink-0 md:col-span-2">
+                        <RawReadoutsPanel
+                          latestPacket={activeLatestPacket}
+                          historyPackets={activeHistoryPackets}
+                          telemetrySource={telemetrySource}
+                          isStale={isLiveStale}
+                          optionalTelemetrySettings={optionalTelemetrySettings}
+                        />
+                      </div>
                     )}
 
                     {/* 3. Supporting: Communications Link Metrics & Freshness */}
                     {showLink && (
-                      <SerialLinkPanel
-                        telemetrySource={telemetrySource}
-                        onSelectSource={handleSelectSource}
-                        config={serialConfig}
-                        onUpdateConfig={(cfg) =>
-                          setSerialConfig((prev) => ({ ...prev, ...cfg }))
-                        }
-                        onToggleConnect={handleToggleSimConnect}
-                        serialState={serialState}
-                        serialMetrics={serialMetrics}
-                        liveBaudRate={liveBaudRate}
-                        onChangeLiveBaudRate={setLiveBaudRate}
-                        onConnectLiveSerial={handleConnectLiveSerial}
-                        onDisconnectLiveSerial={handleDisconnectLiveSerial}
-                        isStale={isLiveStale}
-                        packetAgeSeconds={packetAgeSeconds}
-                      />
+                      <div className="w-full min-w-0 shrink-0">
+                        <SerialLinkPanel
+                          telemetrySource={telemetrySource}
+                          onSelectSource={handleSelectSource}
+                          config={serialConfig}
+                          onUpdateConfig={(cfg) =>
+                            setSerialConfig((prev) => ({ ...prev, ...cfg }))
+                          }
+                          onToggleConnect={handleToggleSimConnect}
+                          serialState={serialState}
+                          serialMetrics={serialMetrics}
+                          liveBaudRate={liveBaudRate}
+                          onChangeLiveBaudRate={setLiveBaudRate}
+                          onConnectLiveSerial={handleConnectLiveSerial}
+                          onDisconnectLiveSerial={handleDisconnectLiveSerial}
+                          isStale={isLiveStale}
+                          packetAgeSeconds={packetAgeSeconds}
+                        />
+                      </div>
                     )}
 
                     {/* 4. Supporting: Simulation Controls (Simulation Mode Only) */}
                     {showSimControls && (
-                      <MissionControlPanel
-                        telemetrySource={telemetrySource}
-                        isRunning={isRunning}
-                        onTogglePlay={handleTogglePlay}
-                        onCalibrateSensors={handleCalibrateSensors}
-                        onInjectDisturbance={handleInjectTurbulence}
-                        onResetSimulation={handleResetSimulation}
-                      />
+                      <div className="w-full min-w-0 shrink-0">
+                        <MissionControlPanel
+                          telemetrySource={telemetrySource}
+                          isRunning={isRunning}
+                          onTogglePlay={handleTogglePlay}
+                          onCalibrateSensors={handleCalibrateSensors}
+                          onInjectDisturbance={handleInjectTurbulence}
+                          onResetSimulation={handleResetSimulation}
+                        />
+                      </div>
                     )}
                   </div>
                 )}
@@ -985,8 +1041,8 @@ export default function App() {
 
         {/* WORKSPACE 3: TELEMETRY EXPLORER */}
         {activeTab === 'TELEMETRY' && (
-          <div className="h-full w-full p-0.5 bg-[var(--bg-base)] flex flex-col gap-2.5 min-h-0 flex-1 overflow-hidden">
-            <div className="flex-1 min-h-0 flex flex-col h-full">
+          <div className="h-full w-full p-0.5 bg-[var(--bg-base)] flex flex-col gap-2.5 min-h-0 flex-1 overflow-y-auto lg:overflow-hidden">
+            <div className="flex-1 min-h-[420px] lg:min-h-0 flex flex-col lg:h-full">
               <TelemetryChartPanel
                 history={activeHistoryPackets}
                 latestPacket={activeLatestPacket}
@@ -1002,15 +1058,15 @@ export default function App() {
         {/* WORKSPACE 4: ATTITUDE & SENSORS */}
         {activeTab === 'ATTITUDE_SENSORS' && (
           <div className="h-full w-full p-0.5 bg-[var(--bg-base)] grid grid-cols-1 lg:grid-cols-3 gap-2.5 overflow-y-auto lg:overflow-hidden min-h-0 min-w-0 flex-1">
-            <div className="lg:col-span-2 h-full min-h-0 min-w-0 flex flex-col gap-2.5 lg:overflow-hidden">
-              <div className="flex-[1.1] min-h-[220px] min-w-0 overflow-hidden">
+            <div className="lg:col-span-2 lg:h-full min-h-0 min-w-0 grid grid-cols-1 sm:grid-cols-2 lg:flex lg:flex-col gap-2.5 lg:overflow-hidden">
+              <div className="h-[280px] sm:h-[260px] lg:h-auto lg:flex-[1.1] min-h-[220px] min-w-0 overflow-hidden">
                 <ThreeAttitudeViewport
                   latestPacket={activeLatestPacket}
                   telemetrySource={telemetrySource}
                   isStale={isLiveStale}
                 />
               </div>
-              <div className="flex-1 min-h-[200px] min-w-0 overflow-hidden">
+              <div className="h-[260px] sm:h-[260px] lg:h-auto lg:flex-1 min-h-[200px] min-w-0 overflow-hidden">
                 <TelemetryChartPanel
                   history={activeHistoryPackets}
                   latestPacket={activeLatestPacket}
@@ -1021,20 +1077,24 @@ export default function App() {
                 />
               </div>
             </div>
-            <div className="flex flex-col gap-2.5 overflow-y-auto h-full pr-1 pb-2 lg:pb-0 shrink-0 min-h-0 min-w-0">
-              <FlightStatePanel
-                latestPacket={activeLatestPacket}
-                telemetrySource={telemetrySource}
-                isStale={isLiveStale}
-                onOverrideState={handleOverrideState}
-              />
-              <RawReadoutsPanel
-                latestPacket={activeLatestPacket}
-                historyPackets={activeHistoryPackets}
-                telemetrySource={telemetrySource}
-                isStale={isLiveStale}
-                optionalTelemetrySettings={optionalTelemetrySettings}
-              />
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:flex lg:flex-col gap-2.5 lg:overflow-y-auto lg:h-full pr-0.5 lg:pr-1 pb-2 lg:pb-0 shrink-0 min-h-0 min-w-0 items-stretch">
+              <div className="w-full min-w-0 shrink-0 md:col-span-2">
+                <FlightStatePanel
+                  latestPacket={activeLatestPacket}
+                  telemetrySource={telemetrySource}
+                  isStale={isLiveStale}
+                  onOverrideState={handleOverrideState}
+                />
+              </div>
+              <div className="w-full min-w-0 shrink-0 md:col-span-2">
+                <RawReadoutsPanel
+                  latestPacket={activeLatestPacket}
+                  historyPackets={activeHistoryPackets}
+                  telemetrySource={telemetrySource}
+                  isStale={isLiveStale}
+                  optionalTelemetrySettings={optionalTelemetrySettings}
+                />
+              </div>
             </div>
           </div>
         )}
@@ -1079,12 +1139,12 @@ export default function App() {
             {/* Right Column: Live Frame Stream Inspector & Post-Flight Judge Report (7 cols) */}
             <div className="lg:col-span-7 flex flex-col gap-2.5 min-h-0 min-w-0">
               {/* Inline Recent Raw Frame Stream Inspector */}
-              <div className="ops-card p-3.5 flex flex-col gap-2">
-                <div className="flex items-center justify-between border-b border-[var(--border-subtle)] pb-2">
-                  <div className="flex items-center gap-2">
-                    <Terminal className="w-4 h-4 text-[var(--accent-cobalt)]" />
-                    <div>
-                      <h3 className="text-xs font-bold uppercase tracking-wider text-[var(--text-primary)]">
+              <div className="ops-card p-3 sm:p-3.5 flex flex-col gap-2">
+                <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--border-subtle)] pb-2">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <Terminal className="w-4 h-4 text-[var(--accent-cobalt)] shrink-0" />
+                    <div className="min-w-0">
+                      <h3 className="text-xs font-bold uppercase tracking-wider text-[var(--text-primary)] truncate">
                         Recent Telemetry Frame Stream (
                         {telemetrySource === 'SIMULATION'
                           ? 'SIMULATION'
@@ -1101,7 +1161,7 @@ export default function App() {
                   <button
                     type="button"
                     onClick={() => setIsTerminalOpen(true)}
-                    className="px-2.5 py-1 bg-[var(--bg-surface-2)] hover:bg-[var(--bg-surface-3)] text-[var(--text-primary)] border border-[var(--border-subtle)] rounded-[var(--radius-sm)] text-xs font-semibold cursor-pointer flex items-center gap-1.5"
+                    className="px-2.5 py-1.5 sm:py-1 bg-[var(--bg-surface-2)] hover:bg-[var(--bg-surface-3)] text-[var(--text-primary)] border border-[var(--border-subtle)] rounded-[var(--radius-sm)] text-xs font-semibold cursor-pointer flex items-center gap-1.5 shrink-0"
                   >
                     <Radio className="w-3.5 h-3.5 text-[var(--accent-cobalt)]" />
                     <span>Open Full Log Console &amp; CSV Export</span>
@@ -1158,6 +1218,9 @@ export default function App() {
           </div>
         )}
       </main>
+
+      {/* Persistent Mobile & Tablet Bottom Navigation Bar (< lg) */}
+      <MobileWorkspaceNav activeTab={activeTab} setActiveTab={setActiveTab} />
 
       {/* Terminal Slide-out Drawer */}
       <TerminalDrawer

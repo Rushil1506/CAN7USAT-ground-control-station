@@ -74,7 +74,14 @@ export const JudgeReportPanel: React.FC<JudgeReportPanelProps> = ({
     .map((p) => p.velocity)
     .filter(isValidNum);
   const stage2Velocities = historyPackets
-    .filter((p) => p.stateCode === 6)
+    .filter(
+      (p) =>
+        p.stateCode === 6 ||
+        p.stateCode === 8 ||
+        p.stateCode === 9 ||
+        p.stateCode === 10 ||
+        p.stateCode === 11
+    )
     .map((p) => p.velocity)
     .filter(isValidNum);
 

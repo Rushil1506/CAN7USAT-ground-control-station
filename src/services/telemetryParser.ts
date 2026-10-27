@@ -1,7 +1,77 @@
 import { FlightStateCode, TelemetryPacket } from '../types';
 
 export const LIVE_TELEMETRY_TEAM_ID = '2026-IN-SPACe-CAN-7USAT-017';
-export const DEFAULT_MAX_LINE_LENGTH = 512;
+export const DEFAULT_MAX_LINE_LENGTH = 1024;
+
+/**
+ * Exact 24-field key order serialized by `transmitLoRaTelemetry()` in
+ * `flight-software-reference/CAN7USAT_FSW.ino` (lines 601-662).
+ */
+export const FSW_TELEMETRY_KEYS = [
+  'TEAM_ID',
+  'MISSION_TIME_S',
+  'PACKET_COUNT',
+  'BARO_ALT_M',
+  'PRESSURE_PA',
+  'BARO_TEMP_C',
+  'BATTERY_V',
+  'GPS_TIME_UTC',
+  'LAT_DEG',
+  'LON_DEG',
+  'GPS_ALT_MSL_M',
+  'SATELLITES',
+  'ACCEL_X_MPS2',
+  'ACCEL_Y_MPS2',
+  'ACCEL_Z_MPS2',
+  'ROLL_DEG',
+  'PITCH_DEG',
+  'GYRO_Z_RADPS',
+  'LEFT_SERVO_DEG',
+  'RIGHT_SERVO_DEG',
+  'BURNWIRE_MOSFET',
+  'BUZZER_MOSFET',
+  'FLYWHEEL_RPM',
+  'FLIGHT_STATE',
+] as const;
+
+/**
+ * Exact 32-field key order serialized by `transmitLoRaTelemetry()` and `logDataToSD()` in
+ * `flight-software-integrated/CAN7USAT_FSW.ino` (v2 continuous-rotation parafoil brake spool telemetry).
+ */
+export const FSW_V2_TELEMETRY_KEYS = [
+  'TEAM_ID',
+  'MISSION_TIME_S',
+  'PACKET_COUNT',
+  'BARO_ALT_M',
+  'PRESSURE_PA',
+  'BARO_TEMP_C',
+  'BATTERY_V',
+  'GPS_TIME_UTC',
+  'LAT_DEG',
+  'LON_DEG',
+  'GPS_ALT_MSL_M',
+  'SATELLITES',
+  'ACCEL_X_MPS2',
+  'ACCEL_Y_MPS2',
+  'ACCEL_Z_MPS2',
+  'ROLL_DEG',
+  'PITCH_DEG',
+  'GYRO_Z_RADPS',
+  'LEFT_BRAKE_CMD',
+  'RIGHT_BRAKE_CMD',
+  'LEFT_SPOOL_DIR',
+  'RIGHT_SPOOL_DIR',
+  'LEFT_SERVO_US',
+  'RIGHT_SERVO_US',
+  'LEFT_EST_PULL_MM',
+  'RIGHT_EST_PULL_MM',
+  'ACTUATOR_CAL',
+  'ACTUATOR_FAULT',
+  'BURNWIRE_MOSFET',
+  'BUZZER_MOSFET',
+  'FLYWHEEL_RPM',
+  'FLIGHT_STATE',
+] as const;
 
 export type TelemetryParseResult =
   | {
@@ -16,6 +86,16 @@ export type TelemetryParseResult =
       rawLine: string;
       packet?: TelemetryPacket;
     };
+
+export interface FirmwareControlMessage {
+  kind: 'ACK' | 'ERR';
+  category: 'STATE' | 'MODE' | 'STEER' | 'SPOOL' | 'SD' | 'TARGET_GPS' | 'UNKNOWN_CMD' | 'GENERIC';
+  rawLine: string;
+  payload: string;
+  targetLatDeg?: number;
+  targetLonDeg?: number;
+  stateName?: string;
+}
 
 type FieldParseResult<T> =
   | { ok: true; value: T; error?: string }
@@ -42,6 +122,20 @@ function parseStrictNonNegativeInt(
   return { ok: true, value };
 }
 
+function parseStrictBinaryFlag(token: string, fieldName: string): FieldParseResult<boolean> {
+  const trimmed = token.trim();
+  if (trimmed === '0') {
+    return { ok: true, value: false };
+  }
+  if (trimmed === '1') {
+    return { ok: true, value: true };
+  }
+  return {
+    ok: false,
+    error: `Invalid binary flag for ${fieldName}: '${token}' (expected '0' or '1')`,
+  };
+}
+
 function parseStrictFloat(
   token: string,
   fieldName: string,
@@ -57,13 +151,25 @@ function parseStrictFloat(
     return { ok: false, error: `Non-finite float for ${fieldName}: '${token}'` };
   }
   if (value < minVal || value > maxVal) {
-    return { ok: false, error: `Out-of-range value for ${fieldName}: ${value} (expected [${minVal}, ${maxVal}])` };
+    return {
+      ok: false,
+      error: `Out-of-range value for ${fieldName}: ${value} (expected [${minVal}, ${maxVal}])`,
+    };
   }
   return { ok: true, value: Object.is(value, -0) ? 0 : value };
 }
 
+/**
+ * Validates GNSS UTC time token.
+ * Accepts either `"HH:MM:SS"` (with optional fractional seconds) OR `"UNAVAILABLE"`
+ * which `CAN7USAT_FSW.ino` (line 93) transmits before `gnss.getPVT()` locks.
+ */
 function parseGnssTime(token: string): FieldParseResult<string> {
-  const match = STRICT_GNSS_TIME_REGEX.exec(token);
+  const trimmed = token.trim();
+  if (trimmed.toUpperCase() === 'UNAVAILABLE') {
+    return { ok: true, value: 'UNAVAILABLE' };
+  }
+  const match = STRICT_GNSS_TIME_REGEX.exec(trimmed);
   if (!match) {
     return { ok: false, error: `Invalid GNSS time format: '${token}'` };
   }
@@ -74,21 +180,17 @@ function parseGnssTime(token: string): FieldParseResult<string> {
     return { ok: false, error: `Out-of-range GNSS clock values: '${token}'` };
   }
   // Preserve the received GNSS time string exactly as the raw value
-  return { ok: true, value: token };
+  return { ok: true, value: trimmed };
 }
 
 /**
  * Converts a verified GNSS UTC time-of-day string (HH:MM:SS) to Indian Standard Time (IST = UTC + 05:30).
  *
  * Library verification:
- * The transmitter firmware (sketch_sep10c.ino) uses `SparkFun_u-blox_GNSS_Arduino_Library.h`
- * (`SFE_UBLOX_GNSS` over I2C with `COM_TYPE_UBX` and `setAutoPVT(true)`), constructing the field via:
- *   snprintf(gTime, sizeof(gTime), "%02d:%02d:%02d", gnss.getHour(), gnss.getMinute(), gnss.getSecond());
- * In `SFE_UBLOX_GNSS`, `getHour()`, `getMinute()`, and `getSecond()` return the UBX-NAV-PVT UTC
- * time-of-day fields (0..23 h, 0..59 m, 0..60 s).
- *
- * Because the packet contains no date field, this function returns a time-of-day string (HH:MM:SS)
- * with 24-hour midnight rollover and never fabricates a calendar date or day-offset marker.
+ * `CAN7USAT_FSW.ino` uses `SparkFun_u-blox_GNSS_Arduino_Library.h` (`SFE_UBLOX_GNSS`), constructing
+ * the field via:
+ *   snprintf(tBuf, sizeof(tBuf), "%02d:%02d:%02d", gnss.getHour(), gnss.getMinute(), gnss.getSecond());
+ * Before first PVT lock, `gnssTimeUTC` is `"UNAVAILABLE"`, for which this function returns `null`.
  */
 export function convertGnssUtcToIst(rawUtcTime: string): string | null {
   const match = STRICT_GNSS_TIME_REGEX.exec(rawUtcTime);
@@ -175,9 +277,10 @@ export function evaluateGpsValidity(
 }
 
 /**
- * Maps known transmitter state names to the GCS FlightStateCode enum where an unambiguous
- * equivalent exists. Unknown or transmitter-specific states return null so UI components
- * display the authoritative transmitted state string without fabricating an enum phase.
+ * Maps known transmitter state names (both `getFlightStateName()` wire labels from
+ * `flight-software-reference/nav_types.h` and C++ enum identifiers) to the GCS `FlightStateCode`.
+ * Unknown or unmapped states (e.g. `'UNKNOWN'`, `'DEPLOY'`, `'IDLE'`) return `null` so UI components
+ * display the authoritative transmitted state string without fabricating a phase.
  */
 export function mapTransmitterStateToCode(fswStateName: string): FlightStateCode | null {
   const normalized = fswStateName.trim().toUpperCase();
@@ -193,42 +296,199 @@ export function mapTransmitterStateToCode(fswStateName: string): FlightStateCode
       return FlightStateCode.ASCENT;
     case 'ROCKET_DEPLOY':
       return FlightStateCode.ROCKET_DEPLOY;
+    case 'DROGUE_DESCENT':
     case 'DESCENT':
       return FlightStateCode.DESCENT;
+    case 'PARAFOIL_DEPLOY':
+    case 'PARAFOIL_DEPLOYMENT':
+      return FlightStateCode.PARAFOIL_DEPLOYMENT;
+    case 'PRECISION_GUIDE':
+    case 'PRECISION_GUIDANCE':
+      return FlightStateCode.PRECISION_GUIDANCE;
+    case 'TERMINAL_LOITER':
+    case 'TERMINAL_GUIDANCE':
+      return FlightStateCode.TERMINAL_GUIDANCE;
+    case 'FINAL_APPROACH':
+      return FlightStateCode.FINAL_APPROACH;
     case 'AEROBREAK_RELEASE':
       return FlightStateCode.AEROBREAK_RELEASE;
-    case 'IMPACT':
     case 'LANDED':
+    case 'LANDING':
+    case 'IMPACT':
       return FlightStateCode.IMPACT;
+    case 'FAILSAFE':
+      return FlightStateCode.FAILSAFE;
     default:
       return null;
   }
 }
 
 /**
- * Pure parser for a single CSV line from the Arduino + RA-08H LoRa receiver.
+ * Maps a transmitted state name to the exact `0..9` `enum class FlightState : uint8_t` index
+ * defined in `flight-software-reference/nav_types.h`. Returns `null` for legacy/simulator-only
+ * or unknown state strings.
+ */
+export function mapFirmwareStateIndex(fswStateName: string): number | null {
+  const normalized = fswStateName.trim().toUpperCase();
+  switch (normalized) {
+    case 'BOOT':
+      return 0;
+    case 'LAUNCH_PAD':
+      return 1;
+    case 'ASCENT':
+    case 'LAUNCH_DETECT':
+      return 2;
+    case 'DROGUE_DESCENT':
+    case 'DESCENT':
+      return 3;
+    case 'PARAFOIL_DEPLOY':
+    case 'PARAFOIL_DEPLOYMENT':
+      return 4;
+    case 'PRECISION_GUIDE':
+    case 'PRECISION_GUIDANCE':
+      return 5;
+    case 'TERMINAL_LOITER':
+    case 'TERMINAL_GUIDANCE':
+      return 6;
+    case 'FINAL_APPROACH':
+      return 7;
+    case 'LANDED':
+    case 'LANDING':
+    case 'IMPACT':
+      return 8;
+    case 'FAILSAFE':
+      return 9;
+    default:
+      return null;
+  }
+}
+
+/**
+ * Deterministically reconstructs the normalized steering command `[-1.0, +1.0]` from
+ * `LEFT_SERVO_DEG` and `RIGHT_SERVO_DEG` using the inverse of `ActuatorController::setSteering`
+ * (`flight-software-reference/actuators.cpp` lines 45-71):
+ *   leftBrake  = clamp((90 - leftServoDeg) / 90, 0, 1)
+ *   rightBrake = clamp((90 - rightServoDeg) / 90, 0, 1)
+ *   steering   = rightBrake - leftBrake
+ */
+export function deriveSteeringFromServos(
+  leftServoDeg: number,
+  rightServoDeg: number
+): number {
+  const leftBrake = Math.max(0, Math.min(1, (90.0 - leftServoDeg) / 90.0));
+  const rightBrake = Math.max(0, Math.min(1, (90.0 - rightServoDeg) / 90.0));
+  const net = Math.max(-1, Math.min(1, rightBrake - leftBrake));
+  return Number(net.toFixed(3));
+}
+
+/**
+ * Parses `ACK:...` and `ERR:...` lines emitted on `LORA_SERIAL` by `processTelecommand()`
+ * in `flight-software-reference/CAN7USAT_FSW.ino` (lines 356-539).
+ */
+export function parseFirmwareControlLine(inputLine: string): FirmwareControlMessage | null {
+  const rawLine = inputLine.replace(/[\r\n]+$/g, '').trim();
+  if (!rawLine) return null;
+
+  if (rawLine.startsWith('ACK:')) {
+    const payload = rawLine.slice(4).trim();
+    if (payload.startsWith('STATE=')) {
+      const stateName = payload.slice(6).trim();
+      return { kind: 'ACK', category: 'STATE', rawLine, payload, stateName };
+    }
+    if (payload.startsWith('MODE=')) {
+      return { kind: 'ACK', category: 'MODE', rawLine, payload };
+    }
+    if (payload.startsWith('STEER=')) {
+      return { kind: 'ACK', category: 'STEER', rawLine, payload };
+    }
+    if (payload.startsWith('SPOOL=')) {
+      return { kind: 'ACK', category: 'SPOOL', rawLine, payload };
+    }
+    if (payload.startsWith('SD=')) {
+      return { kind: 'ACK', category: 'SD', rawLine, payload };
+    }
+    if (payload.startsWith('TARGET_GPS=')) {
+      const rest = payload.slice('TARGET_GPS='.length);
+      const parts = rest.split(',');
+      const lat = parts.length >= 1 ? Number(parts[0]) : NaN;
+      const lon = parts.length >= 2 ? Number(parts[1]) : NaN;
+      return {
+        kind: 'ACK',
+        category: 'TARGET_GPS',
+        rawLine,
+        payload,
+        targetLatDeg: Number.isFinite(lat) ? lat : undefined,
+        targetLonDeg: Number.isFinite(lon) ? lon : undefined,
+      };
+    }
+    return { kind: 'ACK', category: 'GENERIC', rawLine, payload };
+  }
+
+  if (rawLine.startsWith('ERR:')) {
+    const payload = rawLine.slice(4).trim();
+    if (payload.startsWith('TARGET_GPS')) {
+      return { kind: 'ERR', category: 'TARGET_GPS', rawLine, payload };
+    }
+    if (payload.startsWith('SPOOL=')) {
+      return { kind: 'ERR', category: 'SPOOL', rawLine, payload };
+    }
+    if (payload.startsWith('STEER=')) {
+      return { kind: 'ERR', category: 'STEER', rawLine, payload };
+    }
+    if (payload.startsWith('UNKNOWN_CMD=')) {
+      return { kind: 'ERR', category: 'UNKNOWN_CMD', rawLine, payload };
+    }
+    return { kind: 'ERR', category: 'GENERIC', rawLine, payload };
+  }
+
+  return null;
+}
+
+function parseSpoolDirection(
+  token: string,
+  fieldName: string
+): FieldParseResult<'STOP' | 'WIND' | 'RELEASE'> {
+  const trimmed = token.trim().toUpperCase();
+  if (trimmed === 'STOP' || trimmed === 'WIND' || trimmed === 'RELEASE') {
+    return { ok: true, value: trimmed };
+  }
+  return {
+    ok: false,
+    error: `Invalid spool direction for ${fieldName}: '${token}' (expected STOP, WIND, or RELEASE)`,
+  };
+}
+
+function parseEstimatedPullMm(
+  token: string,
+  fieldName: string
+): FieldParseResult<number | null> {
+  const trimmed = token.trim();
+  if (trimmed.toUpperCase() === 'UNCAL') {
+    return { ok: true, value: null };
+  }
+  return parseStrictFloat(trimmed, fieldName, 0, 500);
+}
+
+function parseActuatorCalStatus(
+  token: string
+): FieldParseResult<'CALIBRATED' | 'UNCAL_LOCKED'> {
+  const trimmed = token.trim().toUpperCase();
+  if (trimmed === 'CALIBRATED' || trimmed === 'UNCAL_LOCKED') {
+    return { ok: true, value: trimmed };
+  }
+  return {
+    ok: false,
+    error: `Invalid ACTUATOR_CAL token: '${token}' (expected CALIBRATED or UNCAL_LOCKED)`,
+  };
+}
+
+/**
+ * Pure parser for a single telemetry line from the CAN-7USAT flight software or receiver.
  *
- * Schema (19 fields + optional 20th empty field from trailing comma):
- *  0: teamId (2026-IN-SPACe-CAN-7USAT-017)
- *  1: missionTimeSeconds (integer, s)
- *  2: packetNumber (integer)
- *  3: altitude (float, m)
- *  4: pressure (float, Pa -> converted to hPa for GCS, raw preserved in rawPressurePa)
- *  5: temperature (float, °C)
- *  6: batteryVoltage (float, V)
- *  7: GNSS time (HH:MM:SS)
- *  8: latitude (float, deg)
- *  9: longitude (float, deg)
- * 10: GPS altitude (float, m)
- * 11: satellites in view (integer)
- * 12: accelX (float)
- * 13: accelY (float)
- * 14: accelZ (float)
- * 15: roll (float, deg)
- * 16: pitch (float, deg)
- * 17: spinRate (float, deg/s)
- * 18: flight software state (string)
- * 19: optional empty trailing field
+ * Supported wire & log schemas:
+ * 1. `FSW_KV_32` / `FSW_CSV_32` (Integrated `flight-software-integrated/CAN7USAT_FSW.ino` 32-field v2 continuous-rotation brake spool telemetry).
+ * 2. `FSW_KV_24` / `FSW_CSV_24` (Reference `flight-software-reference/CAN7USAT_FSW.ino` 24-field v1 telemetry).
+ * 3. `LEGACY_CSV_19` (19-field + optional 20th empty trailing field positional CSV format).
  */
 export function parseTelemetryLine(
   inputLine: string,
@@ -241,9 +501,81 @@ export function parseTelemetryLine(
 
   const rawFields = rawLine.split(',');
 
-  // Support either 19 fields or 20 fields when the 20th field is empty due to trailing comma
-  let fields: string[];
-  if (rawFields.length === 20) {
+  // Detect whether this line uses KEY=VALUE pairs (CAN7USAT_FSW transmitLoRaTelemetry format)
+  const isKeyValueFormat = rawFields[0].includes('=');
+
+  let values: string[];
+  let packetFormat: 'FSW_KV_32' | 'FSW_CSV_32' | 'FSW_KV_24' | 'FSW_CSV_24' | 'LEGACY_CSV_19';
+
+  if (isKeyValueFormat) {
+    let kvTokens: string[];
+    let expectedKeys: readonly string[];
+    if (
+      rawFields.length === 32 ||
+      (rawFields.length === 33 && rawFields[32].trim() === '')
+    ) {
+      packetFormat = 'FSW_KV_32';
+      kvTokens = rawFields.slice(0, 32);
+      expectedKeys = FSW_V2_TELEMETRY_KEYS;
+    } else if (
+      rawFields.length === 24 ||
+      (rawFields.length === 25 && rawFields[24].trim() === '')
+    ) {
+      packetFormat = 'FSW_KV_24';
+      kvTokens = rawFields.slice(0, 24);
+      expectedKeys = FSW_TELEMETRY_KEYS;
+    } else {
+      return {
+        ok: false,
+        error: `Invalid KEY=VALUE field count: expected 32 (v2) or 24 (v1) fields, got ${rawFields.length}`,
+        rawLine,
+      };
+    }
+
+    values = [];
+    for (let i = 0; i < expectedKeys.length; i++) {
+      const token = kvTokens[i].trim();
+      const eqIdx = token.indexOf('=');
+      if (eqIdx <= 0) {
+        return {
+          ok: false,
+          error: `Missing KEY=VALUE separator at field ${i} ('${token}')`,
+          rawLine,
+        };
+      }
+      const key = token.slice(0, eqIdx).trim();
+      const val = token.slice(eqIdx + 1).trim();
+      const expectedKey = expectedKeys[i];
+      if (key !== expectedKey) {
+        return {
+          ok: false,
+          error: `Unexpected telemetry key at field ${i}: got '${key}', expected '${expectedKey}'`,
+          rawLine,
+        };
+      }
+      values.push(val);
+    }
+  } else if (rawFields.length === 32 || (rawFields.length === 33 && rawFields[32].trim() === '')) {
+    packetFormat = 'FSW_CSV_32';
+    values = rawFields.slice(0, 32);
+    if (values[0].trim() === 'TEAM_ID') {
+      return {
+        ok: false,
+        error: 'CSV header row ignored',
+        rawLine,
+      };
+    }
+  } else if (rawFields.length === 24 || (rawFields.length === 25 && rawFields[24].trim() === '')) {
+    packetFormat = 'FSW_CSV_24';
+    values = rawFields.slice(0, 24);
+    if (values[0].trim() === 'TEAM_ID') {
+      return {
+        ok: false,
+        error: 'CSV header row ignored',
+        rawLine,
+      };
+    }
+  } else if (rawFields.length === 20) {
     if (rawFields[19].trim() !== '') {
       return {
         ok: false,
@@ -251,19 +583,21 @@ export function parseTelemetryLine(
         rawLine,
       };
     }
-    fields = rawFields.slice(0, 19);
+    packetFormat = 'LEGACY_CSV_19';
+    values = rawFields.slice(0, 19);
   } else if (rawFields.length === 19) {
-    fields = rawFields;
+    packetFormat = 'LEGACY_CSV_19';
+    values = rawFields;
   } else {
     return {
       ok: false,
-      error: `Invalid field count: expected 19 fields (plus optional trailing comma), got ${rawFields.length}`,
+      error: `Invalid field count: expected 32 (FSW v2), 24 (FSW v1), or 19 (legacy) fields (plus optional trailing comma), got ${rawFields.length}`,
       rawLine,
     };
   }
 
   // 0: teamId
-  const teamId = fields[0].trim();
+  const teamId = values[0].trim();
   if (teamId !== LIVE_TELEMETRY_TEAM_ID) {
     return {
       ok: false,
@@ -272,77 +606,208 @@ export function parseTelemetryLine(
     };
   }
 
-  // 1: missionTimeSeconds
-  const missionTimeRes = parseStrictNonNegativeInt(fields[1], 'missionTimeSeconds', 10_000_000);
+  // 1: missionTimeSeconds (MISSION_TIME_S)
+  const missionTimeRes = parseStrictNonNegativeInt(values[1], 'missionTimeSeconds', 10_000_000);
   if (!missionTimeRes.ok) return { ok: false, error: missionTimeRes.error, rawLine };
 
-  // 2: packetNumber
-  const packetNumberRes = parseStrictNonNegativeInt(fields[2], 'packetNumber', 10_000_000);
+  // 2: packetNumber (PACKET_COUNT / RECORD_COUNT)
+  const packetNumberRes = parseStrictNonNegativeInt(values[2], 'packetNumber', 10_000_000);
   if (!packetNumberRes.ok) return { ok: false, error: packetNumberRes.error, rawLine };
 
-  // 3: altitude (m)
-  const altitudeRes = parseStrictFloat(fields[3], 'altitude', -1000, 100_000);
+  // 3: altitude (BARO_ALT_M, m AGL)
+  const altitudeRes = parseStrictFloat(values[3], 'altitude', -1000, 100_000);
   if (!altitudeRes.ok) return { ok: false, error: altitudeRes.error, rawLine };
 
-  // 4: pressure (Pa -> hPa)
-  const pressurePaRes = parseStrictFloat(fields[4], 'pressure', 0, 300_000);
+  // 4: pressure (PRESSURE_PA, Pa -> hPa)
+  const pressurePaRes = parseStrictFloat(values[4], 'pressure', 0, 300_000);
   if (!pressurePaRes.ok) return { ok: false, error: pressurePaRes.error, rawLine };
   const rawPressurePa = pressurePaRes.value;
   const pressureHpa = rawPressurePa / 100.0;
 
-  // 5: temperature (°C)
-  const temperatureRes = parseStrictFloat(fields[5], 'temperature', -100, 200);
+  // 5: temperature (BARO_TEMP_C, °C)
+  const temperatureRes = parseStrictFloat(values[5], 'temperature', -100, 200);
   if (!temperatureRes.ok) return { ok: false, error: temperatureRes.error, rawLine };
 
-  // 6: batteryVoltage (V)
-  const batteryVoltageRes = parseStrictFloat(fields[6], 'batteryVoltage', 0, 50);
+  // 6: batteryVoltage (BATTERY_V, V)
+  const batteryVoltageRes = parseStrictFloat(values[6], 'batteryVoltage', 0, 50);
   if (!batteryVoltageRes.ok) return { ok: false, error: batteryVoltageRes.error, rawLine };
 
-  // 7: GNSS time
-  const gnssTimeRes = parseGnssTime(fields[7]);
+  // 7: GNSS time (GPS_TIME_UTC, HH:MM:SS or UNAVAILABLE)
+  const gnssTimeRes = parseGnssTime(values[7]);
   if (!gnssTimeRes.ok) return { ok: false, error: gnssTimeRes.error, rawLine };
 
-  // 8, 9, 10: latitude, longitude, gpsAltitude (allow any finite float so unlocked GPS values like 999.0 or 0.0000 are handled by conservative GPS validity without dropping non-GPS sensors)
-  const latRes = parseStrictFloat(fields[8], 'latitude', -10000, 10000);
+  // 8, 9, 10: LAT_DEG, LON_DEG, GPS_ALT_MSL_M
+  const latRes = parseStrictFloat(values[8], 'latitude', -10000, 10000);
   if (!latRes.ok) return { ok: false, error: latRes.error, rawLine };
 
-  const lonRes = parseStrictFloat(fields[9], 'longitude', -10000, 10000);
+  const lonRes = parseStrictFloat(values[9], 'longitude', -10000, 10000);
   if (!lonRes.ok) return { ok: false, error: lonRes.error, rawLine };
 
-  const gpsAltRes = parseStrictFloat(fields[10], 'gpsAltitude', -10000, 200_000);
+  const gpsAltRes = parseStrictFloat(values[10], 'gpsAltitude', -10000, 200_000);
   if (!gpsAltRes.ok) return { ok: false, error: gpsAltRes.error, rawLine };
 
-  // 11: satellites in view
-  const satsRes = parseStrictNonNegativeInt(fields[11], 'gpsSats', 99);
+  // 11: satellites in view (SATELLITES)
+  const satsRes = parseStrictNonNegativeInt(values[11], 'gpsSats', 99);
   if (!satsRes.ok) return { ok: false, error: satsRes.error, rawLine };
 
-  // 12, 13, 14: accelX, accelY, accelZ
-  const accelXRes = parseStrictFloat(fields[12], 'accelX', -500, 500);
+  // 12, 13, 14: ACCEL_X_MPS2, ACCEL_Y_MPS2, ACCEL_Z_MPS2
+  const accelXRes = parseStrictFloat(values[12], 'accelX', -500, 500);
   if (!accelXRes.ok) return { ok: false, error: accelXRes.error, rawLine };
 
-  const accelYRes = parseStrictFloat(fields[13], 'accelY', -500, 500);
+  const accelYRes = parseStrictFloat(values[13], 'accelY', -500, 500);
   if (!accelYRes.ok) return { ok: false, error: accelYRes.error, rawLine };
 
-  const accelZRes = parseStrictFloat(fields[14], 'accelZ', -500, 500);
+  const accelZRes = parseStrictFloat(values[14], 'accelZ', -500, 500);
   if (!accelZRes.ok) return { ok: false, error: accelZRes.error, rawLine };
 
-  // 15, 16: roll, pitch (degrees)
-  const rollRes = parseStrictFloat(fields[15], 'roll', -360, 360);
+  // 15, 16: ROLL_DEG, PITCH_DEG (degrees)
+  const rollRes = parseStrictFloat(values[15], 'roll', -360, 360);
   if (!rollRes.ok) return { ok: false, error: rollRes.error, rawLine };
 
-  const pitchRes = parseStrictFloat(fields[16], 'pitch', -360, 360);
+  const pitchRes = parseStrictFloat(values[16], 'pitch', -360, 360);
   if (!pitchRes.ok) return { ok: false, error: pitchRes.error, rawLine };
 
-  // 17: spinRate
-  const spinRateRes = parseStrictFloat(fields[17], 'spinRate', -10000, 10000);
+  // 17: GYRO_Z_RADPS / spinRate (preserved without silent rescaling)
+  const spinRateRes = parseStrictFloat(values[17], 'spinRate', -10000, 10000);
   if (!spinRateRes.ok) return { ok: false, error: spinRateRes.error, rawLine };
 
-  // 18: flight software state
-  const fswStateName = fields[18].trim();
+  let leftServoDeg: number | null = null;
+  let rightServoDeg: number | null = null;
+  let derivedSteering: number | null = null;
+  let burnwireActive: boolean | null = null;
+  let buzzerMosfet: boolean | null = null;
+  let wheelRpm: number | null = null;
+  let leftBrakeCmd: number | null = null;
+  let rightBrakeCmd: number | null = null;
+  let leftSpoolDir: 'STOP' | 'WIND' | 'RELEASE' | null = null;
+  let rightSpoolDir: 'STOP' | 'WIND' | 'RELEASE' | null = null;
+  let leftServoUs: number | null = null;
+  let rightServoUs: number | null = null;
+  let leftEstPullMm: number | null = null;
+  let rightEstPullMm: number | null = null;
+  let actuatorCalStatus: 'CALIBRATED' | 'UNCAL_LOCKED' | null = null;
+  let actuatorFault: string | null = null;
+  let fswStateRaw: string;
+
+  if (packetFormat === 'FSW_KV_32' || packetFormat === 'FSW_CSV_32') {
+    // 18: LEFT_BRAKE_CMD (0.000..1.000)
+    const leftBrakeRes = parseStrictFloat(values[18], 'leftBrakeCmd', 0, 1);
+    if (!leftBrakeRes.ok) return { ok: false, error: leftBrakeRes.error, rawLine };
+    leftBrakeCmd = leftBrakeRes.value;
+
+    // 19: RIGHT_BRAKE_CMD (0.000..1.000)
+    const rightBrakeRes = parseStrictFloat(values[19], 'rightBrakeCmd', 0, 1);
+    if (!rightBrakeRes.ok) return { ok: false, error: rightBrakeRes.error, rawLine };
+    rightBrakeCmd = rightBrakeRes.value;
+
+    // Net normalized steering command [-1.0, +1.0] (right brake minus left brake)
+    derivedSteering = Number(
+      Math.max(-1, Math.min(1, rightBrakeCmd - leftBrakeCmd)).toFixed(3)
+    );
+
+    // 20: LEFT_SPOOL_DIR (STOP | WIND | RELEASE)
+    const leftDirRes = parseSpoolDirection(values[20], 'leftSpoolDir');
+    if (!leftDirRes.ok) return { ok: false, error: leftDirRes.error, rawLine };
+    leftSpoolDir = leftDirRes.value;
+
+    // 21: RIGHT_SPOOL_DIR (STOP | WIND | RELEASE)
+    const rightDirRes = parseSpoolDirection(values[21], 'rightSpoolDir');
+    if (!rightDirRes.ok) return { ok: false, error: rightDirRes.error, rawLine };
+    rightSpoolDir = rightDirRes.value;
+
+    // 22: LEFT_SERVO_US (0..3000 µs)
+    const leftUsRes = parseStrictNonNegativeInt(values[22], 'leftServoUs', 3000);
+    if (!leftUsRes.ok) return { ok: false, error: leftUsRes.error, rawLine };
+    leftServoUs = leftUsRes.value;
+
+    // 23: RIGHT_SERVO_US (0..3000 µs)
+    const rightUsRes = parseStrictNonNegativeInt(values[23], 'rightServoUs', 3000);
+    if (!rightUsRes.ok) return { ok: false, error: rightUsRes.error, rawLine };
+    rightServoUs = rightUsRes.value;
+
+    // 24: LEFT_EST_PULL_MM (float 0..500 or UNCAL -> null)
+    const leftPullRes = parseEstimatedPullMm(values[24], 'leftEstPullMm');
+    if (!leftPullRes.ok) return { ok: false, error: leftPullRes.error, rawLine };
+    leftEstPullMm = leftPullRes.value;
+
+    // 25: RIGHT_EST_PULL_MM (float 0..500 or UNCAL -> null)
+    const rightPullRes = parseEstimatedPullMm(values[25], 'rightEstPullMm');
+    if (!rightPullRes.ok) return { ok: false, error: rightPullRes.error, rawLine };
+    rightEstPullMm = rightPullRes.value;
+
+    // 26: ACTUATOR_CAL (CALIBRATED | UNCAL_LOCKED)
+    const calRes = parseActuatorCalStatus(values[26]);
+    if (!calRes.ok) return { ok: false, error: calRes.error, rawLine };
+    actuatorCalStatus = calRes.value;
+
+    // 27: ACTUATOR_FAULT (strict identifier token)
+    const faultTrimmed = values[27].trim();
+    if (!STRICT_FSW_STATE_REGEX.test(faultTrimmed)) {
+      return {
+        ok: false,
+        error: `Invalid ACTUATOR_FAULT string: '${values[27]}'`,
+        rawLine,
+      };
+    }
+    actuatorFault = faultTrimmed;
+
+    // 28: BURNWIRE_MOSFET (0 | 1)
+    const burnwireRes = parseStrictBinaryFlag(values[28], 'burnwireMosfet');
+    if (!burnwireRes.ok) return { ok: false, error: burnwireRes.error, rawLine };
+    burnwireActive = burnwireRes.value;
+
+    // 29: BUZZER_MOSFET (0 | 1)
+    const buzzerRes = parseStrictBinaryFlag(values[29], 'buzzerMosfet');
+    if (!buzzerRes.ok) return { ok: false, error: buzzerRes.error, rawLine };
+    buzzerMosfet = buzzerRes.value;
+
+    // 30: FLYWHEEL_RPM (integer RPM)
+    const wheelRpmRes = parseStrictNonNegativeInt(values[30], 'flywheelRpm', 100_000);
+    if (!wheelRpmRes.ok) return { ok: false, error: wheelRpmRes.error, rawLine };
+    wheelRpm = wheelRpmRes.value;
+
+    // 31: FLIGHT_STATE
+    fswStateRaw = values[31];
+  } else if (packetFormat === 'FSW_KV_24' || packetFormat === 'FSW_CSV_24') {
+    // 18: LEFT_SERVO_DEG (0..180 deg)
+    const leftServoRes = parseStrictFloat(values[18], 'leftServoDeg', 0, 180);
+    if (!leftServoRes.ok) return { ok: false, error: leftServoRes.error, rawLine };
+    leftServoDeg = leftServoRes.value;
+
+    // 19: RIGHT_SERVO_DEG (0..180 deg)
+    const rightServoRes = parseStrictFloat(values[19], 'rightServoDeg', 0, 180);
+    if (!rightServoRes.ok) return { ok: false, error: rightServoRes.error, rawLine };
+    rightServoDeg = rightServoRes.value;
+
+    derivedSteering = deriveSteeringFromServos(leftServoDeg, rightServoDeg);
+
+    // 20: BURNWIRE_MOSFET (0 | 1)
+    const burnwireRes = parseStrictBinaryFlag(values[20], 'burnwireMosfet');
+    if (!burnwireRes.ok) return { ok: false, error: burnwireRes.error, rawLine };
+    burnwireActive = burnwireRes.value;
+
+    // 21: BUZZER_MOSFET (0 | 1)
+    const buzzerRes = parseStrictBinaryFlag(values[21], 'buzzerMosfet');
+    if (!buzzerRes.ok) return { ok: false, error: buzzerRes.error, rawLine };
+    buzzerMosfet = buzzerRes.value;
+
+    // 22: FLYWHEEL_RPM (integer RPM)
+    const wheelRpmRes = parseStrictNonNegativeInt(values[22], 'flywheelRpm', 100_000);
+    if (!wheelRpmRes.ok) return { ok: false, error: wheelRpmRes.error, rawLine };
+    wheelRpm = wheelRpmRes.value;
+
+    // 23: FLIGHT_STATE
+    fswStateRaw = values[23];
+  } else {
+    // 18: flight software state (19-field legacy CSV)
+    fswStateRaw = values[18];
+  }
+
+  const fswStateName = fswStateRaw.trim();
   if (!STRICT_FSW_STATE_REGEX.test(fswStateName)) {
     return {
       ok: false,
-      error: `Invalid flight software state string: '${fields[18]}'`,
+      error: `Invalid flight software state string: '${fswStateRaw}'`,
       rawLine,
     };
   }
@@ -355,9 +820,11 @@ export function parseTelemetryLine(
   );
 
   const stateCode = mapTransmitterStateToCode(fswStateName);
+  const fswStateIndex = mapFirmwareStateIndex(fswStateName);
 
   const packet: TelemetryPacket = {
     source: 'LIVE_SERIAL',
+    packetFormat,
     receivedAtMs,
     receivedAtTimeStr: formatComputerTimeOfDayUtc(receivedAtMs),
     teamId,
@@ -391,16 +858,36 @@ export function parseTelemetryLine(
     roll: rollRes.value,
     pitch: pitchRes.value,
     spinRate: spinRateRes.value,
+    gyroZRadps: spinRateRes.value,
 
     // Flight software state
     stateCode,
     fswStateName,
+    fswStateIndex,
     l1Connected: true,
+
+    // Actuator & guidance fields
+    wheelRpm,
+    leftServoDeg,
+    rightServoDeg,
+    derivedSteering,
+    burnwireActive,
+    buzzerMosfet,
+    audioBeaconActive: buzzerMosfet,
+    leftBrakeCmd,
+    rightBrakeCmd,
+    leftSpoolDir,
+    rightSpoolDir,
+    leftServoUs,
+    rightServoUs,
+    leftEstPullMm,
+    rightEstPullMm,
+    actuatorCalStatus,
+    actuatorFault,
 
     // Absent telemetry fields explicitly set to null (never inferred or replaced with 0)
     velocity: null,
     acceleration: null,
-    wheelRpm: null,
     yaw: null,
     co2: null,
     pm2_5: null,
@@ -412,7 +899,6 @@ export function parseTelemetryLine(
     rssi: null,
     l2Connected: null,
     deployed: null,
-    audioBeaconActive: null,
     gsmModuleActive: null,
   };
 

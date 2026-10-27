@@ -626,20 +626,20 @@ export const LandingPredictorWorkspace: React.FC<LandingPredictorWorkspaceProps>
   return (
     <div className="flex flex-col lg:flex-row gap-3 h-full w-full overflow-y-auto lg:overflow-hidden p-1.5 min-h-0 min-w-0">
       {/* LEFT / CENTER COLUMN: Map-First Geospatial Canvas (66% width on desktop) */}
-      <div className="flex-1 min-w-0 flex flex-col ops-card overflow-hidden min-h-[460px] lg:min-h-0">
+      <div className="shrink-0 lg:shrink lg:flex-1 min-w-0 flex flex-col ops-card overflow-hidden min-h-[420px] lg:min-h-0">
         {/* Top Geospatial Status & Controls Header */}
-        <div className="px-4 py-2.5 bg-[var(--bg-surface-1)] border-b border-[var(--border-subtle)] flex flex-wrap items-center justify-between gap-2">
-          <div className="flex items-center gap-2.5">
-            <div className="p-1.5 rounded-[var(--radius-sm)] bg-[var(--accent-teal-soft)] text-[var(--accent-teal)]">
+        <div className="px-3 sm:px-4 py-2 sm:py-2.5 bg-[var(--bg-surface-1)] border-b border-[var(--border-subtle)] flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-center gap-2 sm:gap-2.5 min-w-0">
+            <div className="p-1.5 rounded-[var(--radius-sm)] bg-[var(--accent-teal-soft)] text-[var(--accent-teal)] shrink-0">
               <Crosshair className="w-4 h-4" />
             </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <h2 className="text-sm font-bold text-[var(--text-primary)]">
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
+                <h2 className="text-xs sm:text-sm font-bold text-[var(--text-primary)]">
                   Landing Predictor Workspace
                 </h2>
                 <span
-                  className={`text-[11px] font-mono-data font-semibold px-2 py-0.5 rounded-[var(--radius-xs)] border ${
+                  className={`text-[10px] sm:text-[11px] font-mono-data font-semibold px-1.5 sm:px-2 py-0.5 rounded-[var(--radius-xs)] border ${
                     activeResponse.valid
                       ? 'bg-[var(--status-nominal-bg)] text-[var(--status-nominal)] border-[var(--status-nominal)]/30'
                       : 'bg-[var(--status-warning-bg)] text-[var(--status-warning)] border-[var(--status-warning)]/30'
@@ -650,14 +650,14 @@ export const LandingPredictorWorkspace: React.FC<LandingPredictorWorkspaceProps>
                     : `GATED: ${activeResponse.reason_code}`}
                 </span>
               </div>
-              <p className="text-[11px] text-[var(--text-secondary)]">
+              <p className="text-[11px] text-[var(--text-secondary)] hidden sm:block">
                 Primary Method: Local Tangent-Plane (ENU) Physics Baseline • Receive-Only Telemetry
               </p>
             </div>
           </div>
 
           {/* Right Map Controls: Basemap, Follow, Zoom */}
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
             {/* GNSS Fix Status Pill */}
             <span
               className={`px-2 py-1 text-[11px] font-mono-data font-semibold rounded-[var(--radius-xs)] border flex items-center gap-1.5 ${
@@ -841,15 +841,15 @@ export const LandingPredictorWorkspace: React.FC<LandingPredictorWorkspaceProps>
           <div ref={mapContainerRef} className="absolute inset-0 w-full h-full z-0" />
 
           {/* Floating Map Legend & Live Coordinate Overlay (Top-Left) */}
-          <div className="absolute top-3 left-3 bg-[var(--bg-surface-1)]/95 backdrop-blur-xs border border-[var(--border-subtle)] shadow-[var(--shadow-md)] rounded-[var(--radius-md)] p-3 z-10 max-w-xs space-y-2 pointer-events-none">
-            <div className="text-[11px] font-semibold text-[var(--text-secondary)] uppercase tracking-wider">
+          <div className="absolute top-2.5 left-2.5 sm:top-3 sm:left-3 max-w-[calc(100%-20px)] sm:max-w-xs bg-[var(--bg-surface-1)]/95 backdrop-blur-xs border border-[var(--border-subtle)] shadow-[var(--shadow-md)] rounded-[var(--radius-md)] p-2 sm:p-3 z-10 space-y-1.5 sm:space-y-2 pointer-events-none">
+            <div className="text-[10px] sm:text-[11px] font-semibold text-[var(--text-secondary)] uppercase tracking-wider">
               Geospatial Track Summary
             </div>
-            <div className="space-y-1 font-mono-data text-xs">
-              <div className="flex justify-between gap-4">
-                <span className="text-[var(--text-tertiary)]">Vehicle Pos:</span>
+            <div className="space-y-1 font-mono-data text-[10px] sm:text-xs">
+              <div className="flex justify-between gap-2 sm:gap-4">
+                <span className="text-[var(--text-tertiary)] shrink-0">Vehicle Pos:</span>
                 <span
-                  className={`font-semibold ${
+                  className={`font-semibold truncate ${
                     isGpsValid
                       ? 'text-[var(--text-primary)]'
                       : 'text-[var(--status-alert)]'
@@ -858,10 +858,10 @@ export const LandingPredictorWorkspace: React.FC<LandingPredictorWorkspaceProps>
                   {formatCoord(canSatLat, canSatLon)}
                 </span>
               </div>
-              <div className="flex justify-between gap-4">
-                <span className="text-[var(--text-tertiary)]">Predicted Landing:</span>
+              <div className="flex justify-between gap-2 sm:gap-4">
+                <span className="text-[var(--text-tertiary)] shrink-0">Predicted Landing:</span>
                 <span
-                  className={`font-semibold ${
+                  className={`font-semibold truncate ${
                     activeResponse.valid && pred
                       ? 'text-[var(--accent-teal)]'
                       : 'text-[var(--status-warning)]'
@@ -872,8 +872,8 @@ export const LandingPredictorWorkspace: React.FC<LandingPredictorWorkspaceProps>
                     : `NONE (${activeResponse.reason_code})`}
                 </span>
               </div>
-              <div className="flex justify-between gap-4">
-                <span className="text-[var(--text-tertiary)]">Valid Track Fixes:</span>
+              <div className="flex justify-between gap-2 sm:gap-4">
+                <span className="text-[var(--text-tertiary)] shrink-0">Valid Track Fixes:</span>
                 <span className="text-[var(--text-primary)] font-semibold">
                   {validTrailPoints.length} pts
                 </span>
@@ -894,14 +894,14 @@ export const LandingPredictorWorkspace: React.FC<LandingPredictorWorkspaceProps>
 
           {/* Gated Prediction Banner on Map (When Prediction is Invalid) */}
           {!activeResponse.valid && (
-            <div className="absolute bottom-8 left-1/2 -translate-x-1/2 bg-[var(--bg-surface-1)]/95 backdrop-blur-xs border border-[var(--status-warning)]/50 shadow-[var(--shadow-md)] rounded-[var(--radius-md)] px-4 py-2.5 z-10 flex items-center gap-2.5 max-w-lg">
+            <div className="absolute bottom-6 sm:bottom-8 left-2.5 right-2.5 sm:left-1/2 sm:right-auto sm:-translate-x-1/2 bg-[var(--bg-surface-1)]/95 backdrop-blur-xs border border-[var(--status-warning)]/50 shadow-[var(--shadow-md)] rounded-[var(--radius-md)] px-3 py-2 sm:px-4 sm:py-2.5 z-10 flex items-center gap-2 sm:gap-2.5 max-w-lg">
               <AlertTriangle className="w-4 h-4 text-[var(--status-warning)] shrink-0" />
-              <div className="text-xs">
-                <div className="font-semibold text-[var(--text-primary)]">
+              <div className="text-[11px] sm:text-xs min-w-0">
+                <div className="font-semibold text-[var(--text-primary)] truncate">
                   Landing Point Suppressed — {activeResponse.status} (
                   <span className="font-mono-data">{activeResponse.reason_code}</span>)
                 </div>
-                <div className="text-[var(--text-secondary)] text-[11px]">
+                <div className="text-[var(--text-secondary)] text-[10px] sm:text-[11px]">
                   {activeResponse.reason_message}
                 </div>
               </div>
@@ -911,7 +911,7 @@ export const LandingPredictorWorkspace: React.FC<LandingPredictorWorkspaceProps>
       </div>
 
       {/* RIGHT COLUMN: Structured Inspector Rail (34% width on desktop) */}
-      <div className="w-full lg:w-[430px] xl:w-[460px] shrink-0 flex flex-col gap-3 overflow-y-auto h-full pr-0.5 min-h-0">
+      <div className="w-full lg:w-[430px] xl:w-[460px] shrink-0 flex flex-col gap-3 lg:overflow-y-auto lg:h-full pr-0.5 min-h-0">
         {/* CARD 1: Predicted Landing Coordinates & Drift Kinematics */}
         <section className="ops-card p-4 space-y-3">
           <div className="flex items-center justify-between border-b border-[var(--border-subtle)] pb-2.5">

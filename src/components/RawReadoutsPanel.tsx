@@ -1,8 +1,19 @@
 import React from 'react';
-import { ListFilter, Battery, Volume2, Radio, Activity, Compass, Clock, ShieldCheck } from 'lucide-react';
+import {
+  Activity,
+  Compass,
+  Cpu,
+  Gauge,
+  Navigation,
+  Thermometer,
+  Wind,
+  Zap,
+} from 'lucide-react';
 import { TelemetryPacket, TelemetrySource } from '../types';
-import { convertGnssUtcToIst } from '../services/telemetryParser';
-import { OptionalTelemetrySettings } from '../services/optionalTelemetrySettings';
+import {
+  DEFAULT_OPTIONAL_TELEMETRY_SETTINGS,
+  OptionalTelemetrySettings,
+} from '../services/optionalTelemetrySettings';
 
 interface RawReadoutsPanelProps {
   latestPacket: TelemetryPacket | null;
@@ -12,462 +23,422 @@ interface RawReadoutsPanelProps {
   optionalTelemetrySettings?: OptionalTelemetrySettings;
 }
 
-const isValidNum = (val: unknown): val is number => typeof val === 'number' && Number.isFinite(val);
+const fmtNum = (
+  val: number | null | undefined,
+  decimals: number = 2
+): string => {
+  if (val === null || val === undefined || !Number.isFinite(val)) {
+    return 'UNAVAILABLE';
+  }
+  return val.toFixed(decimals);
+};
+
+const fmtInt = (val: number | null | undefined): string => {
+  if (val === null || val === undefined || !Number.isFinite(val)) {
+    return 'UNAVAILABLE';
+  }
+  return Math.round(val).toString();
+};
+
+const fmtSigned = (
+  val: number | null | undefined,
+  decimals: number = 1
+): string => {
+  if (val === null || val === undefined || !Number.isFinite(val)) {
+    return 'UNAVAILABLE';
+  }
+  const s = val.toFixed(decimals);
+  return val > 0 ? `+${s}` : s;
+};
+
+const renderReadoutLabel = (label: string): React.ReactNode => {
+  const parenIdx = label.indexOf('(');
+  if (parenIdx <= 0) {
+    return label;
+  }
+  const primaryText = label.slice(0, parenIdx).trim();
+  const identifierText = label.slice(parenIdx).trim();
+  return (
+    <>
+      <span>{primaryText}</span>{' '}
+      <span className="inline-block font-mono-data text-[10px] text-[var(--text-tertiary)] font-normal break-all sm:break-normal">
+        {identifierText}
+      </span>
+    </>
+  );
+};
 
 export const RawReadoutsPanel: React.FC<RawReadoutsPanelProps> = ({
   latestPacket,
   telemetrySource = 'SIMULATION',
-  isStale = false,
-  optionalTelemetrySettings,
+  optionalTelemetrySettings = DEFAULT_OPTIONAL_TELEMETRY_SETTINGS,
 }) => {
-  const hasPacket = latestPacket !== null;
+  const p = latestPacket;
   const isSim = telemetrySource === 'SIMULATION';
 
-  const isWheelEnabled = optionalTelemetrySettings?.enableWheelRpm ?? false;
-  const isBattEnabled = optionalTelemetrySettings?.enableBatteryVoltage ?? true;
-  const isSps30Enabled = optionalTelemetrySettings?.enableSps30 ?? false;
-  const isUvEnabled = optionalTelemetrySettings?.enableUv ?? false;
+  const hasValidGps = Boolean(
+    p &&
+      p.gpsValid &&
+      typeof p.latitude === 'number' &&
+      typeof p.longitude === 'number'
+  );
 
-  const altStr = isValidNum(latestPacket?.altitude) ? `${latestPacket.altitude.toFixed(1)} m` : 'UNAVAILABLE';
-  const tempStr = isValidNum(latestPacket?.temperature) ? `${latestPacket.temperature.toFixed(1)}°C` : 'UNAVAILABLE';
-  const presStr = isValidNum(latestPacket?.pressure) ? `${latestPacket.pressure.toFixed(2)} hPa` : 'UNAVAILABLE';
-  const rawPaStr = isValidNum(latestPacket?.rawPressurePa) ? `${Math.round(latestPacket.rawPressurePa)} Pa` : null;
-  const humStr = isValidNum(latestPacket?.humidity) ? `${latestPacket.humidity.toFixed(1)}% RH` : 'UNAVAILABLE';
+  // In 24-field CAN7USAT_FSW packets, FLYWHEEL_RPM is always transmitted in live serial
+  const showWheelRpm =
+    (!isSim && p !== null && typeof p.wheelRpm === 'number' && Number.isFinite(p.wheelRpm)) ||
+    optionalTelemetrySettings.enableWheelRpm;
 
-  const rpmStr = !isWheelEnabled
-    ? 'DISABLED'
-    : isValidNum(latestPacket?.wheelRpm)
-    ? `${Math.round(latestPacket.wheelRpm).toLocaleString()} RPM`
-    : 'UNAVAILABLE';
-
-  const voltStr = !isBattEnabled
-    ? 'DISABLED'
-    : isValidNum(latestPacket?.batteryVoltage)
-    ? `${latestPacket.batteryVoltage.toFixed(2)}V`
-    : 'UNAVAILABLE';
-
-  const socStr = isBattEnabled && isValidNum(latestPacket?.batterySoc) ? `${latestPacket.batterySoc.toFixed(0)}%` : null;
-  const currStr = isValidNum(latestPacket?.currentDraw) ? `${latestPacket.currentDraw.toFixed(2)}A` : 'N/A';
-  const pwrStr = isValidNum(latestPacket?.power) ? `${latestPacket.power.toFixed(1)}W` : 'N/A';
-
-  const accelXStr = isValidNum(latestPacket?.accelX) ? latestPacket.accelX.toFixed(2) : '--';
-  const accelYStr = isValidNum(latestPacket?.accelY) ? latestPacket.accelY.toFixed(2) : '--';
-  const accelZStr = isValidNum(latestPacket?.accelZ) ? latestPacket.accelZ.toFixed(2) : '--';
-  const hasAccel =
-    isValidNum(latestPacket?.accelX) && isValidNum(latestPacket?.accelY) && isValidNum(latestPacket?.accelZ);
-
-  const rollStr = isValidNum(latestPacket?.roll) ? `${latestPacket.roll.toFixed(2)}°` : '--';
-  const pitchStr = isValidNum(latestPacket?.pitch) ? `${latestPacket.pitch.toFixed(2)}°` : '--';
-  const spinStr = isValidNum(latestPacket?.spinRate) ? `${latestPacket.spinRate.toFixed(1)}°/s` : '--';
-
-  const co2Str = isValidNum(latestPacket?.co2) ? `${latestPacket.co2.toFixed(1)} ppm` : 'N/A';
-
-  const pm25Str = !isSps30Enabled
-    ? 'DISABLED'
-    : isValidNum(latestPacket?.pm2_5)
-    ? `${latestPacket.pm2_5.toFixed(1)} µg/m³`
-    : 'UNAVAILABLE';
-
-  const uvStr = !isUvEnabled
-    ? 'DISABLED'
-    : isValidNum(latestPacket?.uv)
-    ? `${latestPacket.uv.toFixed(1)} Index`
-    : 'UNAVAILABLE';
-
-  const gnssUtcStr =
-    hasPacket && typeof latestPacket?.timestampUtc === 'string' && latestPacket.timestampUtc.length > 0
-      ? latestPacket.timestampUtc
-      : null;
-  const gnssIstStr =
-    hasPacket && typeof latestPacket?.gnssTimeIst === 'string' && latestPacket.gnssTimeIst.length > 0
-      ? latestPacket.gnssTimeIst
-      : gnssUtcStr
-      ? convertGnssUtcToIst(gnssUtcStr)
-      : null;
-
-  const hasBuzzerStatus = hasPacket && typeof latestPacket?.audioBeaconActive === 'boolean';
-  const buzzerActive = hasBuzzerStatus && latestPacket!.audioBeaconActive === true;
-
-  const hasGsmStatus = hasPacket && typeof latestPacket?.gsmModuleActive === 'boolean';
-  const gsmActive = hasGsmStatus && latestPacket!.gsmModuleActive === true;
+  const readoutGroups = [
+    {
+      category: 'Flight Dynamics & Baro (MS5611)',
+      icon: <Gauge className="w-3.5 h-3.5 text-[var(--accent-cobalt)] shrink-0" />,
+      items: [
+        {
+          label: 'Altitude (BARO_ALT_M)',
+          value: p ? fmtNum(p.altitude, 2) : 'AWAITING',
+          unit: 'm',
+          highlight: true,
+        },
+        {
+          label: 'Descent / Ascent Rate',
+          value: p ? fmtNum(p.velocity, 1) : 'AWAITING',
+          unit: 'm/s',
+          highlight: true,
+        },
+        {
+          label: 'Total Acceleration',
+          value: p ? fmtNum(p.acceleration, 2) : 'AWAITING',
+          unit: 'G',
+          highlight: false,
+        },
+        {
+          label: 'Accel X / Y / Z (MPS2)',
+          value: p
+            ? p.accelX !== null && p.accelY !== null && p.accelZ !== null
+              ? `${p.accelX.toFixed(2)} / ${p.accelY.toFixed(2)} / ${p.accelZ.toFixed(2)}`
+              : 'UNAVAILABLE'
+            : 'AWAITING',
+          unit: isSim ? 'G' : 'm/s²',
+          highlight: false,
+        },
+        {
+          label: 'Baro Pressure (PRESSURE_PA)',
+          value: p ? fmtNum(p.pressure, 2) : 'AWAITING',
+          unit: 'hPa',
+          highlight: false,
+        },
+        {
+          label: 'Baro Temp (BARO_TEMP_C)',
+          value: p ? fmtNum(p.temperature, 2) : 'AWAITING',
+          unit: '°C',
+          highlight: false,
+        },
+      ],
+    },
+    {
+      category: 'Orientation & Actuators (BNO055 + FSW)',
+      icon: <Compass className="w-3.5 h-3.5 text-[var(--accent-teal)] shrink-0" />,
+      items: [
+        {
+          label: 'Flywheel (FLYWHEEL_RPM)',
+          value: !showWheelRpm
+            ? 'DISABLED'
+            : p
+            ? fmtInt(p.wheelRpm)
+            : 'AWAITING',
+          unit: 'RPM',
+          highlight: showWheelRpm,
+        },
+        {
+          label: 'Gyro Z (GYRO_Z_RADPS)',
+          value: p ? fmtNum(p.spinRate, 4) : 'AWAITING',
+          unit: isSim ? 'deg/s' : 'raw (BNO055 Z)',
+          highlight: true,
+        },
+        {
+          label: 'Roll / Pitch (DEG)',
+          value: p
+            ? p.roll !== null && p.pitch !== null
+              ? `${fmtSigned(p.roll, 2)}° / ${fmtSigned(p.pitch, 2)}°`
+              : 'UNAVAILABLE'
+            : 'AWAITING',
+          unit: 'deg',
+          highlight: false,
+        },
+        {
+          label: 'Brake Spool Cmd (L / R)',
+          value: p
+            ? typeof p.leftBrakeCmd === 'number' && typeof p.rightBrakeCmd === 'number'
+              ? `${(p.leftBrakeCmd * 100).toFixed(0)}% / ${(p.rightBrakeCmd * 100).toFixed(0)}%`
+              : typeof p.leftServoDeg === 'number' && typeof p.rightServoDeg === 'number'
+              ? `${p.leftServoDeg.toFixed(1)}° / ${p.rightServoDeg.toFixed(1)}° (v1)`
+              : 'UNAVAILABLE'
+            : 'AWAITING',
+          unit:
+            p && typeof p.leftBrakeCmd === 'number'
+              ? p.actuatorCalStatus === 'UNCAL_LOCKED'
+                ? 'UNCAL LOCKED'
+                : `${p.leftSpoolDir ?? 'STOP'}/${p.rightSpoolDir ?? 'STOP'}`
+              : '',
+          highlight: false,
+        },
+        {
+          label: 'Spool PWM / Est. Pull (Open-Loop)',
+          value: p
+            ? typeof p.leftServoUs === 'number' && typeof p.rightServoUs === 'number'
+              ? `${p.leftServoUs}/${p.rightServoUs}µs • ${
+                  typeof p.leftEstPullMm === 'number' && typeof p.rightEstPullMm === 'number'
+                    ? `${p.leftEstPullMm.toFixed(1)}/${p.rightEstPullMm.toFixed(1)}mm`
+                    : 'UNCAL'
+                }`
+              : 'UNAVAILABLE'
+            : 'AWAITING',
+          unit: p?.actuatorFault && p.actuatorFault !== 'NONE' ? p.actuatorFault : '',
+          highlight: false,
+        },
+        {
+          label: 'Derived Steering Cmd',
+          value: p
+            ? typeof p.derivedSteering === 'number'
+              ? fmtSigned(p.derivedSteering, 3)
+              : 'UNAVAILABLE'
+            : 'AWAITING',
+          unit: '[-1..+1]',
+          highlight: false,
+        },
+        {
+          label: 'Burnwire / Buzzer MOSFET',
+          value: p
+            ? typeof p.burnwireActive === 'boolean' && typeof p.buzzerMosfet === 'boolean'
+              ? `BW:${p.burnwireActive ? '1 (ON)' : '0'} / BZ:${p.buzzerMosfet ? '1 (ON)' : '0'}`
+              : 'UNAVAILABLE'
+            : 'AWAITING',
+          unit: 'GPIO 4/5',
+          highlight: Boolean(p?.burnwireActive || p?.buzzerMosfet),
+        },
+      ],
+    },
+    {
+      category: 'Environmental Payload (Optional / Sim)',
+      icon: <Wind className="w-3.5 h-3.5 text-[var(--status-nominal)] shrink-0" />,
+      items: [
+        {
+          label: 'CO2 Concentration (SCD40)',
+          value: p ? fmtNum(p.co2, 1) : 'AWAITING',
+          unit: 'ppm',
+          highlight: true,
+        },
+        {
+          label: 'Particulate PM2.5 (SPS30)',
+          value: !optionalTelemetrySettings.enableSps30
+            ? 'DISABLED'
+            : p
+            ? fmtNum(p.pm2_5, 1)
+            : 'AWAITING',
+          unit: 'µg/m³',
+          highlight: optionalTelemetrySettings.enableSps30,
+        },
+        {
+          label: 'UV Index (LTR390)',
+          value: !optionalTelemetrySettings.enableUv
+            ? 'DISABLED'
+            : p
+            ? fmtNum(p.uv, 1)
+            : 'AWAITING',
+          unit: 'UVI',
+          highlight: false,
+        },
+        {
+          label: 'Relative Humidity (SHT40)',
+          value: p ? fmtNum(p.humidity, 1) : 'AWAITING',
+          unit: '%RH',
+          highlight: false,
+        },
+      ],
+    },
+    {
+      category: 'GNSS (u-blox) & 2S Power Subsystem',
+      icon: <Zap className="w-3.5 h-3.5 text-[var(--status-warning)] shrink-0" />,
+      items: [
+        {
+          label: 'GNSS Latitude (LAT_DEG)',
+          value: p
+            ? hasValidGps
+              ? `${p.latitude!.toFixed(7)}° N`
+              : 'INVALID / NO FIX'
+            : 'AWAITING',
+          unit: '',
+          highlight: false,
+        },
+        {
+          label: 'GNSS Longitude (LON_DEG)',
+          value: p
+            ? hasValidGps
+              ? `${p.longitude!.toFixed(7)}° E`
+              : 'INVALID / NO FIX'
+            : 'AWAITING',
+          unit: '',
+          highlight: false,
+        },
+        {
+          label: 'GNSS Alt (GPS_ALT_MSL_M)',
+          value: p
+            ? hasValidGps && p.gpsAltitude !== null
+              ? fmtNum(p.gpsAltitude, 2)
+              : 'INVALID / NO FIX'
+            : 'AWAITING',
+          unit: 'm AMSL',
+          highlight: false,
+        },
+        {
+          label: 'Satellites (SATELLITES)',
+          value: p
+            ? p.gpsSats !== null
+              ? `${p.gpsSats} (${p.gpsFixType})`
+              : 'UNAVAILABLE'
+            : 'AWAITING',
+          unit: 'SVs',
+          highlight: false,
+        },
+        {
+          label: '2S Battery (BATTERY_V)',
+          value: !optionalTelemetrySettings.enableBatteryVoltage
+            ? 'DISABLED'
+            : p
+            ? fmtNum(p.batteryVoltage, 2)
+            : 'AWAITING',
+          unit: 'V',
+          highlight: optionalTelemetrySettings.enableBatteryVoltage,
+        },
+        {
+          label: 'GNSS UTC (GPS_TIME_UTC)',
+          value: p ? p.timestampUtc || 'UNAVAILABLE' : 'AWAITING',
+          unit: p?.timestampUtc === 'UNAVAILABLE' ? 'NO PVT' : 'UTC',
+          highlight: false,
+        },
+        {
+          label: 'GNSS IST Time (+05:30)',
+          value: p ? p.gnssTimeIst ?? 'UNAVAILABLE' : 'AWAITING',
+          unit: p?.gnssTimeIst ? 'IST' : '',
+          highlight: true,
+        },
+        {
+          label: 'Packet # / Mission Time',
+          value: p ? `#${p.packetNumber} (${p.missionTimeSeconds}s)` : 'AWAITING',
+          unit: p?.packetFormat ?? '',
+          highlight: false,
+        },
+      ],
+    },
+  ];
 
   return (
-    <div className="ops-card p-3 select-none flex flex-col gap-2">
-      {/* Header */}
-      <div className="flex justify-between items-center">
-        <div className="flex items-center gap-1.5">
-          <ListFilter className="w-3.5 h-3.5 text-[var(--text-secondary)]" />
-          <span className="font-mono-data text-[11px] font-bold text-[var(--text-primary)] uppercase tracking-wider">
-            SENSOR READOUTS
+    <div
+      data-testid="raw-readouts-panel"
+      className="ops-card raw-readouts-container p-3 sm:p-4 select-none"
+    >
+      <div className="flex justify-between items-start border-b border-[var(--border-subtle)] pb-2.5 mb-3 flex-wrap gap-2 min-w-0">
+        <div className="flex items-center gap-2 min-w-0">
+          <Activity className="w-4 h-4 text-[var(--accent-cobalt)] shrink-0" />
+          <span className="text-xs font-bold uppercase tracking-wider text-[var(--text-primary)] leading-snug break-words">
+            Complete Subsystem &amp; Sensor Readout Matrix
           </span>
         </div>
-        <span
-          className={`font-mono-data text-[9px] px-1.5 py-0.5 border rounded-[var(--radius-xs)] uppercase ${
-            !hasPacket
-              ? 'bg-[var(--status-alert-bg)] text-[var(--status-alert)] border-[var(--status-alert)]/40 font-bold'
-              : isStale && !isSim
-              ? 'bg-[var(--status-warning-bg)] text-[var(--status-warning)] border-[var(--status-warning)]/40 font-bold'
-              : isSim
-              ? 'bg-[var(--bg-surface-2)] text-[var(--status-info)] border-[var(--border-subtle)]'
-              : 'bg-[var(--status-nominal-bg)] text-[var(--status-nominal)] border-[var(--status-nominal)]/40 font-bold'
-          }`}
-        >
-          {!hasPacket
-            ? 'NO TELEMETRY'
-            : isSim
-            ? 'SIMULATED SENSORS'
-            : isStale
-            ? 'STALE SERIAL DATA'
-            : 'LIVE SERIAL RX'}
-        </span>
+        <div className="flex items-center gap-x-3 gap-y-1 text-[11px] font-mono-data text-[var(--text-secondary)] flex-wrap min-w-0">
+          <span className="min-w-0 break-words">
+            SOURCE:{' '}
+            <strong
+              className={
+                isSim
+                  ? 'text-[var(--accent-cobalt)]'
+                  : 'text-[var(--accent-teal)]'
+              }
+            >
+              {isSim
+                ? 'SIMULATION'
+                : `LIVE USB-SERIAL (${p?.packetFormat ?? '24-FIELD KV / CSV'})`}
+            </strong>
+          </span>
+          <span className="min-w-0 break-all sm:break-normal">
+            TEAM ID:{' '}
+            <strong className="text-[var(--text-primary)]">
+              {p ? p.teamId : 'NONE'}
+            </strong>
+          </span>
+          <span className="shrink-0">
+            GNSS UTC:{' '}
+            <strong className="text-[var(--text-primary)]">
+              {p ? p.timestampUtc : 'NONE'}
+            </strong>
+          </span>
+          <span className="shrink-0">
+            GNSS IST:{' '}
+            <strong className="text-[var(--accent-cobalt)]">
+              {p ? p.gnssTimeIst ?? 'UNAVAILABLE' : 'NONE'}
+            </strong>
+          </span>
+        </div>
       </div>
 
-      {/* Primary Sensor Readout Grid */}
-      <div className="grid grid-cols-2 gap-x-3 gap-y-1.5 font-mono-data text-[11px]">
-        {/* Air Temp */}
-        <div className="flex justify-between border-b border-[var(--border-subtle)] pb-1 items-center">
-          <span className="text-[var(--text-secondary)]">TEMP:</span>
-          <span
-            className={`font-semibold tabular-nums ${
-              isValidNum(latestPacket?.temperature) ? 'text-[var(--text-primary)]' : 'text-[var(--text-tertiary)]'
-            }`}
+      <div data-testid="raw-readouts-grid" className="raw-readouts-grid">
+        {readoutGroups.map((group) => (
+          <div
+            key={group.category}
+            data-testid="raw-readout-subsystem-card"
+            className="raw-readout-card bg-[var(--bg-surface-2)] border border-[var(--border-subtle)] p-2.5 sm:p-3 flex flex-col justify-between rounded-[var(--radius-md)]"
           >
-            {tempStr}
-          </span>
-        </div>
-
-        {/* Pressure (hPa + raw Pa tooltip) */}
-        <div
-          className="flex justify-between border-b border-[var(--border-subtle)] pb-1 items-center"
-          title={rawPaStr ? `Raw Pressure: ${rawPaStr}` : 'Barometric Pressure'}
-        >
-          <span className="text-[var(--text-secondary)]">BARO PRES:</span>
-          <span
-            className={`font-semibold tabular-nums ${
-              isValidNum(latestPacket?.pressure) ? 'text-[var(--text-primary)]' : 'text-[var(--text-tertiary)]'
-            }`}
-          >
-            {presStr}
-          </span>
-        </div>
-
-        {/* Baro Altitude */}
-        <div className="flex justify-between border-b border-[var(--border-subtle)] pb-1 items-center">
-          <span className="text-[var(--text-secondary)]">ALTITUDE:</span>
-          <span
-            className={`font-semibold tabular-nums ${
-              isValidNum(latestPacket?.altitude) ? 'text-[var(--action-amber)]' : 'text-[var(--text-tertiary)]'
-            }`}
-          >
-            {altStr}
-          </span>
-        </div>
-
-        {/* GNSS Time & Satellites */}
-        <div className="flex justify-between border-b border-[var(--border-subtle)] pb-1 items-center">
-          <span className="text-[var(--text-secondary)]">GNSS SATS:</span>
-          <span
-            className={`font-semibold tabular-nums ${
-              isValidNum(latestPacket?.gpsSats)
-                ? latestPacket!.gpsValid
-                  ? 'text-[var(--status-nominal)]'
-                  : 'text-[var(--status-warning)]'
-                : 'text-[var(--text-tertiary)]'
-            }`}
-          >
-            {isValidNum(latestPacket?.gpsSats) ? `${latestPacket!.gpsSats} (${latestPacket!.gpsFixType})` : 'UNAVAILABLE'}
-          </span>
-        </div>
-
-        {/* Humidity */}
-        <div className="flex justify-between border-b border-[var(--border-subtle)] pb-1 items-center">
-          <span className="text-[var(--text-secondary)]">HUMIDITY:</span>
-          <span
-            className={`font-semibold tabular-nums ${
-              isValidNum(latestPacket?.humidity) ? 'text-[var(--status-info)]' : 'text-[var(--text-tertiary)]'
-            }`}
-          >
-            {humStr}
-          </span>
-        </div>
-
-        {/* Momentum Wheel RPM */}
-        <div className="flex justify-between border-b border-[var(--border-subtle)] pb-1 items-center">
-          <span className="text-[var(--text-secondary)]">DCS FLYWHEEL:</span>
-          <span
-            className={`font-bold tabular-nums ${
-              !isWheelEnabled
-                ? 'text-[var(--text-tertiary)]'
-                : isValidNum(latestPacket?.wheelRpm)
-                ? 'text-[var(--status-nominal)]'
-                : 'text-[var(--text-tertiary)]'
-            }`}
-          >
-            {rpmStr}
-          </span>
-        </div>
-
-        {/* GNSS Clock (Verified UBX-NAV-PVT UTC & Converted IST — Time-of-Day Only, No Date) */}
-        <div
-          className="col-span-2 bg-[var(--bg-base)] px-2 py-1.5 border border-[var(--border-subtle)] rounded-[var(--radius-xs)] text-[10px] space-y-1"
-          title="Transmitted NEO-M9N UBX-NAV-PVT time (HH:MM:SS). Time-of-day only; packet contains no calendar date."
-        >
-          <div className="flex justify-between items-center">
-            <span className="text-[var(--text-secondary)] flex items-center gap-1 font-semibold">
-              <Clock className="w-3 h-3 text-[var(--action-amber)]" />
-              GNSS TIME:
-            </span>
-            <span className="text-[9px] text-[var(--text-tertiary)] uppercase">
-              TIME-OF-DAY ONLY (NO DATE)
-            </span>
-          </div>
-          <div className="grid grid-cols-2 gap-2 border-t border-[var(--border-muted)] pt-1">
-            <div className="flex justify-between items-center">
-              <span className="text-[var(--text-tertiary)]">GNSS UTC:</span>
+            <div className="flex items-start gap-2 border-b border-[var(--border-subtle)] pb-2 mb-2 min-w-0">
+              <span className="mt-0.5 shrink-0">{group.icon}</span>
               <span
-                className={`font-bold tabular-nums ${
-                  gnssUtcStr ? 'text-[var(--text-primary)]' : 'text-[var(--text-tertiary)]'
-                }`}
+                data-testid="raw-readout-category-heading"
+                className="text-[11px] font-bold uppercase tracking-wider text-[var(--text-primary)] leading-snug break-words min-w-0"
               >
-                {gnssUtcStr ?? 'UNAVAILABLE'}
+                {group.category}
               </span>
             </div>
-            <div className="flex justify-between items-center border-l border-[var(--border-muted)] pl-2">
-              <span className="text-[var(--text-tertiary)]">IST (+05:30):</span>
-              <span
-                className={`font-bold tabular-nums ${
-                  gnssIstStr ? 'text-[var(--action-amber)]' : 'text-[var(--text-tertiary)]'
-                }`}
-              >
-                {gnssIstStr ?? 'UNAVAILABLE'}
-              </span>
-            </div>
-          </div>
-        </div>
 
-        {/* IMU Accel X/Y/Z & Roll/Pitch/Spin */}
-        <div className="col-span-2 bg-[var(--bg-base)] px-2 py-1.5 border border-[var(--border-subtle)] rounded-[var(--radius-xs)] text-[10px] space-y-1">
-          <div className="flex justify-between items-center">
-            <span className="text-[var(--text-secondary)] flex items-center gap-1">
-              <Compass className="w-3 h-3 text-[var(--status-info)]" />
-              ACCEL (X/Y/Z):
-            </span>
-            <span className={`font-bold tabular-nums ${hasAccel ? 'text-[var(--text-primary)]' : 'text-[var(--text-tertiary)]'}`}>
-              {hasAccel ? `${accelXStr} / ${accelYStr} / ${accelZStr}` : 'UNAVAILABLE'}
-            </span>
-          </div>
-          <div className="flex justify-between items-center border-t border-[var(--border-muted)] pt-1">
-            <span className="text-[var(--text-secondary)]">R / P / SPIN:</span>
-            <span
-              className={`font-bold tabular-nums ${
-                isValidNum(latestPacket?.roll) ? 'text-[var(--text-primary)]' : 'text-[var(--text-tertiary)]'
-              }`}
-            >
-              {isValidNum(latestPacket?.roll) ? `${rollStr} / ${pitchStr} / ${spinStr}` : 'UNAVAILABLE'}
-            </span>
-          </div>
-        </div>
-
-        {/* 2S Battery Pack */}
-        <div className="col-span-2 flex justify-between items-center bg-[var(--bg-base)] px-2 py-1.5 my-0.5 border border-[var(--border-subtle)] border-l-2 border-l-[var(--status-nominal)] rounded-[var(--radius-xs)]">
-          <div className="flex items-center gap-1.5">
-            <Battery className="w-3.5 h-3.5 text-[var(--status-nominal)] shrink-0" />
-            <span className="text-[var(--text-secondary)]">2S BATT:</span>
-            <span
-              className={`font-bold text-xs tabular-nums ${
-                !isBattEnabled
-                  ? 'text-[var(--text-tertiary)]'
-                  : isValidNum(latestPacket?.batteryVoltage)
-                  ? 'text-[var(--status-nominal)]'
-                  : 'text-[var(--text-tertiary)]'
-              }`}
-            >
-              {voltStr}
-            </span>
-            {socStr && <span className="text-[10px] text-[var(--text-secondary)] tabular-nums">({socStr})</span>}
-          </div>
-
-          <div className="flex items-center gap-2 text-[10px]">
-            <span className="text-[var(--text-secondary)]">
-              I:{' '}
-              <strong
-                className={`tabular-nums ${
-                  isValidNum(latestPacket?.currentDraw) ? 'text-[var(--action-amber)]' : 'text-[var(--text-tertiary)]'
-                }`}
-              >
-                {currStr}
-              </strong>
-            </span>
-            <span className="text-[var(--text-secondary)]">
-              P:{' '}
-              <strong
-                className={`tabular-nums ${
-                  isValidNum(latestPacket?.power) ? 'text-[var(--action-amber)]' : 'text-[var(--text-tertiary)]'
-                }`}
-              >
-                {pwrStr}
-              </strong>
-            </span>
-          </div>
-        </div>
-
-        {/* Environmental Bonus Sensors Section */}
-        <div className="col-span-2 pt-0.5">
-          <div className="text-[10px] text-[var(--text-secondary)] font-semibold uppercase mb-1 flex items-center justify-between">
-            <span className="flex items-center gap-1">
-              <Activity className="w-3 h-3 text-[var(--action-amber)]" />
-              ENVIRONMENTAL SENSORS
-            </span>
-            <span className="text-[9px] text-[var(--text-tertiary)]">
-              {isSim ? 'SIMULATED' : 'NOT IN CSV'}
-            </span>
-          </div>
-          <div className="grid grid-cols-3 gap-1.5 bg-[var(--bg-base)] p-1.5 border border-[var(--border-subtle)] rounded-[var(--radius-xs)] text-[10px]">
-            <div>
-              <span className="text-[var(--text-tertiary)] block text-[9px]">CO₂ (SCD40)</span>
-              <span
-                className={`font-bold tabular-nums ${
-                  isValidNum(latestPacket?.co2) ? 'text-[var(--status-nominal)]' : 'text-[var(--text-tertiary)]'
-                }`}
-              >
-                {co2Str}
-              </span>
-            </div>
-            <div>
-              <span className="text-[var(--text-tertiary)] block text-[9px]">PM2.5 (SPS30)</span>
-              <span
-                className={`font-bold tabular-nums ${
-                  !isSps30Enabled
-                    ? 'text-[var(--text-tertiary)]'
-                    : isValidNum(latestPacket?.pm2_5)
-                    ? 'text-[var(--status-nominal)]'
-                    : 'text-[var(--text-tertiary)]'
-                }`}
-              >
-                {pm25Str}
-              </span>
-            </div>
-            <div>
-              <span className="text-[var(--text-tertiary)] block text-[9px]">UV (LTR390)</span>
-              <span
-                className={`font-bold tabular-nums ${
-                  !isUvEnabled
-                    ? 'text-[var(--text-tertiary)]'
-                    : isValidNum(latestPacket?.uv)
-                    ? 'text-[var(--action-amber)]'
-                    : 'text-[var(--text-tertiary)]'
-                }`}
-              >
-                {uvStr}
-              </span>
+            <div className="space-y-1.5 min-w-0">
+              {group.items.map((item) => {
+                const isUnavailable =
+                  item.value === 'UNAVAILABLE' ||
+                  item.value === 'AWAITING' ||
+                  item.value === 'DISABLED' ||
+                  item.value === 'INVALID / NO FIX';
+                return (
+                  <div
+                    key={item.label}
+                    data-testid="raw-readout-row"
+                    className="raw-readout-row text-xs py-1.5 px-2.5 bg-[var(--bg-surface-1)] border border-[var(--border-subtle)] rounded-[var(--radius-xs)]"
+                  >
+                    <span
+                      data-testid="raw-readout-label"
+                      className="raw-readout-label text-[var(--text-secondary)] text-[11px] font-medium"
+                    >
+                      {renderReadoutLabel(item.label)}
+                    </span>
+                    <span
+                      data-testid="raw-readout-value"
+                      className={`raw-readout-value font-mono-data font-bold tabular-nums text-[11px] ${
+                        isUnavailable
+                          ? 'text-[var(--text-tertiary)] font-normal'
+                          : item.highlight
+                          ? 'text-[var(--accent-cobalt)]'
+                          : 'text-[var(--text-primary)]'
+                      }`}
+                    >
+                      <span>{item.value}</span>
+                      {!isUnavailable && item.unit && (
+                        <span className="ml-1 text-[10px] font-normal text-[var(--text-secondary)]">
+                          {item.unit}
+                        </span>
+                      )}
+                    </span>
+                  </div>
+                );
+              })}
             </div>
           </div>
-        </div>
-
-        {/* Sensor Calibration & System Health Indicators */}
-        <div className="col-span-2 pt-1 border-t border-[var(--border-subtle)]">
-          <div className="text-[10px] text-[var(--text-secondary)] font-semibold uppercase mb-1 flex items-center justify-between">
-            <span className="flex items-center gap-1">
-              <ShieldCheck className="w-3 h-3 text-[var(--accent-teal)]" />
-              CALIBRATION &amp; HEALTH
-            </span>
-            <span className="text-[9px] text-[var(--text-tertiary)]">
-              {isSim ? 'SIM SYNTHESIZED' : 'HARDWARE SENSORS'}
-            </span>
-          </div>
-          <div className="grid grid-cols-2 gap-1.5 font-mono-data text-[10px]">
-            <div className="flex items-center justify-between bg-[var(--bg-base)] px-2 py-1 border border-[var(--border-subtle)] rounded-[var(--radius-xs)]">
-              <span className="text-[var(--text-tertiary)]">IMU ZERO-BIAS:</span>
-              <span
-                className={`font-bold ${
-                  hasAccel && isValidNum(latestPacket?.roll)
-                    ? 'text-[var(--status-nominal)]'
-                    : 'text-[var(--status-warning)]'
-                }`}
-              >
-                {hasAccel && isValidNum(latestPacket?.roll) ? 'CALIBRATED' : 'UNVERIFIED'}
-              </span>
-            </div>
-            <div className="flex items-center justify-between bg-[var(--bg-base)] px-2 py-1 border border-[var(--border-subtle)] rounded-[var(--radius-xs)]">
-              <span className="text-[var(--text-tertiary)]">BARO BASELINE:</span>
-              <span
-                className={`font-bold ${
-                  isValidNum(latestPacket?.pressure) && latestPacket!.pressure > 100
-                    ? 'text-[var(--status-nominal)]'
-                    : 'text-[var(--status-warning)]'
-                }`}
-              >
-                {isValidNum(latestPacket?.pressure) && latestPacket!.pressure > 100
-                  ? 'REF ZERO OK'
-                  : 'PENDING'}
-              </span>
-            </div>
-            <div className="flex items-center justify-between bg-[var(--bg-base)] px-2 py-1 border border-[var(--border-subtle)] rounded-[var(--radius-xs)]">
-              <span className="text-[var(--text-tertiary)]">GNSS EPHEMERIS:</span>
-              <span
-                className={`font-bold ${
-                  latestPacket?.gpsValid
-                    ? 'text-[var(--status-nominal)]'
-                    : 'text-[var(--status-alert)]'
-                }`}
-              >
-                {latestPacket?.gpsValid ? '3D FIX LOCK' : 'NO LOCK'}
-              </span>
-            </div>
-            <div className="flex items-center justify-between bg-[var(--bg-base)] px-2 py-1 border border-[var(--border-subtle)] rounded-[var(--radius-xs)]">
-              <span className="text-[var(--text-tertiary)]">POWER SYSTEM:</span>
-              <span
-                className={`font-bold ${
-                  isValidNum(latestPacket?.batteryVoltage) && latestPacket!.batteryVoltage >= 7.0
-                    ? 'text-[var(--status-nominal)]'
-                    : 'text-[var(--status-alert)]'
-                }`}
-              >
-                {isValidNum(latestPacket?.batteryVoltage) && latestPacket!.batteryVoltage >= 7.0
-                  ? 'NOMINAL >7V'
-                  : 'UNDERVOLT'}
-              </span>
-            </div>
-          </div>
-        </div>
-
-        {/* Recovery Subsystem Status */}
-        <div className="col-span-2 flex justify-between items-center pt-1.5 border-t border-[var(--border-subtle)] mt-0.5 text-[10px]">
-          <div className="flex items-center gap-1">
-            <Volume2 className={`w-3.5 h-3.5 ${buzzerActive ? 'text-[var(--status-nominal)]' : 'text-[var(--text-tertiary)]'}`} />
-            <span className="text-[var(--text-secondary)]">
-              92dB BUZZER:{' '}
-              <strong
-                className={
-                  !hasBuzzerStatus
-                    ? 'text-[var(--text-tertiary)]'
-                    : buzzerActive
-                    ? 'text-[var(--status-nominal)]'
-                    : 'text-[var(--text-secondary)]'
-                }
-              >
-                {!hasBuzzerStatus ? 'UNAVAILABLE' : buzzerActive ? 'BUZZING' : 'STANDBY'}
-              </strong>
-            </span>
-          </div>
-          <div className="flex items-center gap-1">
-            <Radio className={`w-3.5 h-3.5 ${gsmActive ? 'text-[var(--status-nominal)]' : 'text-[var(--text-tertiary)]'}`} />
-            <span className="text-[var(--text-secondary)]">
-              GSM SMS:{' '}
-              <strong
-                className={
-                  !hasGsmStatus
-                    ? 'text-[var(--text-tertiary)]'
-                    : gsmActive
-                    ? 'text-[var(--status-nominal)]'
-                    : 'text-[var(--text-secondary)]'
-                }
-              >
-                {!hasGsmStatus ? 'UNAVAILABLE' : gsmActive ? 'TRANSMITTING' : 'READY'}
-              </strong>
-            </span>
-          </div>
-        </div>
+        ))}
       </div>
     </div>
   );

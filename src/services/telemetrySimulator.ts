@@ -246,17 +246,41 @@ export class TelemetryEngine {
         break;
       }
 
+      case FlightStateCode.PARAFOIL_DEPLOYMENT: {
+        // 7.0s disreefing at <= 700m AGL with burnwire MOSFET active
+        altitude = 695.0 + noise() * 1.0;
+        velocity = 8.5 + noise() * 0.4;
+        accelZ = 1.6 + noise() * 0.25;
+        accelX = noise() * 0.25;
+        accelY = noise() * 0.25;
+        wheelRpm = 0;
+        spinRate = 2.0 + noise() * 0.2;
+        roll = 4.0 + noise() * 1.2;
+        pitch = -2.5 + noise() * 1.0;
+        yaw = ((t * 4.0) % 360) - 180;
+        currentDraw = 1.85;
+        break;
+      }
+
+      case FlightStateCode.PRECISION_GUIDANCE:
+      case FlightStateCode.TERMINAL_GUIDANCE:
+      case FlightStateCode.FINAL_APPROACH:
       case FlightStateCode.AEROBREAK_RELEASE: {
         // Stage 2 Main parafoil phase from ~600m AGL: 600m -> 0m @ 1 - 3 m/s (nominal 2.2 m/s)
         const stage2Time = Math.max(0, t - 51.5);
-        altitude = Math.max(0, 600.0 - stage2Time * 2.2 + noise() * 0.8);
+        altitude =
+          state === FlightStateCode.TERMINAL_GUIDANCE
+            ? Math.max(125.0, 260.0 - stage2Time * 1.5 + noise() * 0.6)
+            : state === FlightStateCode.FINAL_APPROACH
+            ? Math.max(5.0, 110.0 - stage2Time * 2.2 + noise() * 0.5)
+            : Math.max(0, 600.0 - stage2Time * 2.2 + noise() * 0.8);
         velocity = 2.2 + Math.sin(stage2Time * 0.1) * 0.3 + noise() * 0.2;
 
         accelZ = 1.0 + noise() * 0.08;
         accelX = noise() * 0.08;
         accelY = noise() * 0.08;
 
-        wheelRpm = 12000.0 + noise() * 30.0;
+        wheelRpm = 6000.0 + noise() * 20.0;
         spinRate = 2.8 + noise() * 0.1;
         roll = 2.0 + Math.sin(stage2Time * 0.2) * 1.0 + noise();
         pitch = -1.5 + Math.cos(stage2Time * 0.2) * 0.8 + noise();
@@ -265,13 +289,14 @@ export class TelemetryEngine {
         break;
       }
 
+      case FlightStateCode.FAILSAFE:
       case FlightStateCode.IMPACT:
         altitude = 0.0;
         velocity = 0.0;
         accelX = 0;
         accelY = 0;
         accelZ = 1.0;
-        wheelRpm = Math.max(0, 12000.0 - (t - 320) * 1000);
+        wheelRpm = Math.max(0, 6000.0 - (t - 320) * 1000);
         spinRate = 0.0;
         roll = 2.1;
         pitch = 6.4;
@@ -307,8 +332,22 @@ export class TelemetryEngine {
     const now = new Date();
     const utcTimeStr = now.toISOString().split('T')[1].slice(0, 8);
 
+    const isGuidedPhase =
+      state === FlightStateCode.AEROBREAK_RELEASE ||
+      state === FlightStateCode.PRECISION_GUIDANCE ||
+      state === FlightStateCode.TERMINAL_GUIDANCE ||
+      state === FlightStateCode.FINAL_APPROACH;
+    const simSteering = isGuidedPhase ? Number((Math.sin(t * 0.25) * 0.45).toFixed(3)) : 0;
+    const simLeftBrakeCmd =
+      isGuidedPhase && simSteering < 0 ? Number(Math.abs(simSteering).toFixed(3)) : 0;
+    const simRightBrakeCmd =
+      isGuidedPhase && simSteering > 0 ? Number(simSteering.toFixed(3)) : 0;
+    const isBuzzerPhase =
+      state === FlightStateCode.IMPACT || state === FlightStateCode.FAILSAFE;
+
     return {
       source: 'SIMULATION',
+      packetFormat: 'SIMULATION',
       receivedAtMs: now.getTime(),
       receivedAtTimeStr: utcTimeStr,
       teamId: TEAM_INFO.id,
@@ -324,6 +363,7 @@ export class TelemetryEngine {
       accelZ: Math.round(accelZ * 100) / 100,
       wheelRpm: this.optionalSettings.enableWheelRpm ? Math.round(wheelRpm) : null,
       spinRate: Math.round(spinRate * 100) / 100,
+      gyroZRadps: Math.round(spinRate * 100) / 100,
       roll: Math.round(roll * 10) / 10,
       pitch: Math.round(pitch * 10) / 10,
       yaw: Math.round(yaw * 10) / 10,
@@ -352,9 +392,28 @@ export class TelemetryEngine {
       fswStateName: FlightStateCode[state],
       l1Connected: true,
       l2Connected: false,
-      deployed: state === FlightStateCode.AEROBREAK_RELEASE || state === FlightStateCode.IMPACT,
-      audioBeaconActive: state === FlightStateCode.IMPACT,
-      gsmModuleActive: state === FlightStateCode.IMPACT,
+      deployed:
+        isGuidedPhase ||
+        state === FlightStateCode.PARAFOIL_DEPLOYMENT ||
+        isBuzzerPhase,
+      audioBeaconActive: isBuzzerPhase,
+      gsmModuleActive: isBuzzerPhase,
+      leftServoDeg: null,
+      rightServoDeg: null,
+      derivedSteering: simSteering,
+      burnwireActive: state === FlightStateCode.PARAFOIL_DEPLOYMENT,
+      buzzerMosfet: isBuzzerPhase,
+      // Integrated v2 continuous-rotation brake spool fields (safe default uncalibrated lockout)
+      leftBrakeCmd: simLeftBrakeCmd,
+      rightBrakeCmd: simRightBrakeCmd,
+      leftSpoolDir: 'STOP',
+      rightSpoolDir: 'STOP',
+      leftServoUs: 1500,
+      rightServoUs: 1500,
+      leftEstPullMm: null,
+      rightEstPullMm: null,
+      actuatorCalStatus: 'UNCAL_LOCKED',
+      actuatorFault: 'UNCALIBRATED',
     };
   }
 
