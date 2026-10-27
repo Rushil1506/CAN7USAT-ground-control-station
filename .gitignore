@@ -40,6 +40,19 @@ docs/map_rebuild_screenshot.png
 map_data/
 map_packs/
 
+# Embedded firmware builds & toolchains (PlatformIO / Teensy)
+.pio/
+.platformio/
+*.hex
+*.elf
+*.bin
+*.exe
+
+# Generated legacy scripts & temp directories
+server.js
+temp_*
+scratch*
+
 # IDE & Editor configurations
 .vscode/
 .idea/
