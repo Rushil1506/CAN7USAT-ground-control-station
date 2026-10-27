@@ -40,6 +40,12 @@ import {
   loadOptionalTelemetrySettings,
   saveOptionalTelemetrySettings,
 } from './services/optionalTelemetrySettings';
+import { SyncRelayModal } from './components/SyncRelayModal';
+import {
+  globalTelemetrySync,
+  SyncConnectionState,
+  SyncMetrics,
+} from './services/telemetrySyncService';
 
 import { globalTelemetryEngine } from './services/telemetrySimulator';
 import { globalSerialTelemetry } from './services/serialTelemetry';
@@ -96,6 +102,20 @@ export default function App() {
     globalSerialTelemetry.getMetrics()
   );
   const [nowMs, setNowMs] = useState<number>(() => Date.now());
+
+  // Isolated Remote Viewer Telemetry State (Secure Real-Time Cloud Synchronization)
+  const [remoteLatestPacket, setRemoteLatestPacket] =
+    useState<TelemetryPacket | null>(null);
+  const [remoteHistoryPackets, setRemoteHistoryPackets] = useState<
+    TelemetryPacket[]
+  >([]);
+  const [syncState, setSyncState] = useState<SyncConnectionState>(
+    globalTelemetrySync.getState()
+  );
+  const [syncMetrics, setSyncMetrics] = useState<SyncMetrics>(
+    globalTelemetrySync.getMetrics()
+  );
+  const [isSyncModalOpen, setIsSyncModalOpen] = useState<boolean>(false);
 
   // Terminal Log Buffer
   const [rawLogs, setRawLogs] = useState<RawLogEntry[]>([]);
@@ -194,6 +214,14 @@ export default function App() {
           return next;
         });
 
+        // If Cloud Relay is actively publishing in a test session, broadcast the simulated packet
+        if (
+          globalTelemetrySync.isConnected() &&
+          globalTelemetrySync.getRole() === 'publisher'
+        ) {
+          globalTelemetrySync.publishPacket(packet, rawSentence);
+        }
+
         setRawLogs((prev) => {
           const next: RawLogEntry[] = [
             ...prev,
@@ -268,6 +296,14 @@ export default function App() {
           return next;
         });
 
+        // If Cloud Relay is actively publishing, broadcast the verified live packet
+        if (
+          globalTelemetrySync.isConnected() &&
+          globalTelemetrySync.getRole() === 'publisher'
+        ) {
+          globalTelemetrySync.publishPacket(packet, rawLine);
+        }
+
         const rxTimeStr =
           packet.receivedAtTimeStr ??
           new Date(packet.receivedAtMs ?? Date.now())
@@ -340,7 +376,89 @@ export default function App() {
     };
   }, []);
 
-  // Switch between SIMULATION and LIVE_SERIAL cleanly
+  // Subscribe to Remote Telemetry Synchronization Service
+  useEffect(() => {
+    const unsubscribe = globalTelemetrySync.subscribe({
+      onPacket: (packet, rawSentence, meta) => {
+        // Only accept remote packets when in REMOTE_VIEWER mode (strict source isolation)
+        if (telemetrySourceRef.current !== 'REMOTE_VIEWER') {
+          return;
+        }
+
+        setRemoteLatestPacket(packet);
+        setNowMs(Date.now());
+
+        setRemoteHistoryPackets((prev) => {
+          const next = [...prev, packet];
+          if (next.length > MAX_HISTORY_PACKETS) next.shift();
+          return next;
+        });
+
+        const rxTimeStr =
+          packet.receivedAtTimeStr ??
+          new Date(packet.receivedAtMs ?? Date.now())
+            .toISOString()
+            .slice(11, 19);
+
+        setRawLogs((prev) => {
+          const next: RawLogEntry[] = [
+            ...prev,
+            {
+              time: rxTimeStr,
+              text: `${rawSentence} [SEQ #${meta.sequenceNumber} • +${meta.latencyMs}ms]`,
+              type: 'rx',
+              source: 'REMOTE_VIEWER',
+            },
+          ];
+          if (next.length > 300) next.shift();
+          return next;
+        });
+      },
+      onSnapshot: (snapshot) => {
+        if (telemetrySourceRef.current !== 'REMOTE_VIEWER') {
+          return;
+        }
+
+        if (snapshot.latestPacket) {
+          setRemoteLatestPacket(snapshot.latestPacket);
+          setNowMs(Date.now());
+        }
+        if (snapshot.recentHistory && snapshot.recentHistory.length > 0) {
+          setRemoteHistoryPackets(snapshot.recentHistory);
+        }
+
+        const snapshotStatus = snapshot.isHistorical
+          ? `Historical snapshot (${snapshot.recentHistory.length} frames, age ${snapshot.snapshotAgeMs ? (snapshot.snapshotAgeMs / 1000).toFixed(1) : '--'}s)`
+          : `Active snapshot (${snapshot.recentHistory.length} frames)`;
+
+        addLog(`[RELAY] Synchronized: ${snapshotStatus}`, 'sys', 'REMOTE_VIEWER');
+      },
+      onStatusChange: (state, metrics, message) => {
+        setSyncState(state);
+        setSyncMetrics(metrics);
+        if (message) {
+          addLog(
+            `[RELAY] ${message}`,
+            state === 'ERROR' || state === 'AUTH_FAILED' ? 'err' : 'sys',
+            telemetrySourceRef.current
+          );
+        }
+      },
+      onPublisherStatus: (status) => {
+        addLog(
+          `[RELAY] Ground station publisher status: ${status}`,
+          status === 'ACTIVE' ? 'sys' : 'err',
+          telemetrySourceRef.current
+        );
+      },
+    });
+
+    return () => {
+      unsubscribe();
+    };
+  }, []);
+
+  // Switch between SIMULATION, LIVE_SERIAL, and REMOTE_VIEWER cleanly
   const handleSelectSource = (nextSource: TelemetrySource) => {
     if (nextSource === telemetrySource) return;
 
@@ -356,6 +474,24 @@ export default function App() {
         'sys',
         'LIVE_SERIAL'
       );
+    } else if (nextSource === 'REMOTE_VIEWER') {
+      // Stop simulator and disconnect serial
+      globalTelemetryEngine.pause();
+      setIsRunning(false);
+      if (
+        globalSerialTelemetry.getState() === 'CONNECTED' ||
+        globalSerialTelemetry.getState() === 'CONNECTING'
+      ) {
+        void globalSerialTelemetry.disconnect();
+      }
+      addLog(
+        '[SYSTEM] Switched source to REMOTE VIEWER (read-only real-time cloud synchronization).',
+        'sys',
+        'REMOTE_VIEWER'
+      );
+      if (!globalTelemetrySync.isConnected()) {
+        setIsSyncModalOpen(true);
+      }
     } else {
       // Disconnect live serial if active and resume simulation cleanly
       if (
@@ -473,12 +609,14 @@ export default function App() {
   };
 
   const handleSendCommand = (cmd: string) => {
-    // Strictly block command transmission or fake ACKs in LIVE_SERIAL mode
+    // Strictly block command transmission or fake ACKs in LIVE_SERIAL or REMOTE_VIEWER mode
     if (telemetrySource !== 'SIMULATION') {
       addLog(
-        '[SECURITY] Command transmission blocked: Live Serial mode is strictly receive-only.',
+        `[SECURITY] Command transmission blocked: ${
+          telemetrySource === 'REMOTE_VIEWER' ? 'Remote Viewer' : 'Live Serial'
+        } mode is strictly read-only.`,
         'err',
-        'LIVE_SERIAL'
+        telemetrySource
       );
       return;
     }
@@ -499,22 +637,40 @@ export default function App() {
 
   // Active telemetry state based on selected source
   const activeLatestPacket =
-    telemetrySource === 'SIMULATION' ? simLatestPacket : liveLatestPacket;
+    telemetrySource === 'SIMULATION'
+      ? simLatestPacket
+      : telemetrySource === 'REMOTE_VIEWER'
+      ? remoteLatestPacket
+      : liveLatestPacket;
   const activeHistoryPackets =
-    telemetrySource === 'SIMULATION' ? simHistoryPackets : liveHistoryPackets;
+    telemetrySource === 'SIMULATION'
+      ? simHistoryPackets
+      : telemetrySource === 'REMOTE_VIEWER'
+      ? remoteHistoryPackets
+      : liveHistoryPackets;
 
   const packetAgeSeconds =
     telemetrySource === 'LIVE_SERIAL' &&
     liveLatestPacket?.receivedAtMs !== undefined
       ? Math.max(0, (nowMs - liveLatestPacket.receivedAtMs) / 1000)
+      : telemetrySource === 'REMOTE_VIEWER' &&
+        remoteLatestPacket?.receivedAtMs !== undefined
+      ? Math.max(0, (nowMs - remoteLatestPacket.receivedAtMs) / 1000)
       : null;
 
   const isLiveStale =
-    telemetrySource === 'LIVE_SERIAL' &&
-    liveLatestPacket !== null &&
-    (serialState !== 'CONNECTED' ||
-      (packetAgeSeconds !== null &&
-        packetAgeSeconds > STALE_PACKET_THRESHOLD_SEC));
+    telemetrySource === 'LIVE_SERIAL'
+      ? liveLatestPacket !== null &&
+        (serialState !== 'CONNECTED' ||
+          (packetAgeSeconds !== null &&
+            packetAgeSeconds > STALE_PACKET_THRESHOLD_SEC))
+      : telemetrySource === 'REMOTE_VIEWER'
+      ? remoteLatestPacket !== null &&
+        (!syncMetrics.publisherActive ||
+          syncState !== 'CONNECTED' ||
+          (packetAgeSeconds !== null &&
+            packetAgeSeconds > STALE_PACKET_THRESHOLD_SEC))
+      : false;
 
   // Overview Landing Predictor summary (source-isolated and gated, using shared predictorConfig)
   const overviewPrediction = useMemo(() => {
@@ -539,6 +695,15 @@ export default function App() {
   }, [rawLogs, telemetrySource]);
 
   const handleUpdateSharedTarget = (lat: number | null, lon: number | null) => {
+    // Strictly block modifying shared target coordinates on remote viewers
+    if (telemetrySource === 'REMOTE_VIEWER') {
+      addLog(
+        '[SECURITY] Target modification blocked: Remote Viewer mode is strictly read-only.',
+        'err',
+        'REMOTE_VIEWER'
+      );
+      return;
+    }
     setPredictorConfig((prev) => ({
       ...prev,
       target_lat_deg: lat,
@@ -630,6 +795,9 @@ export default function App() {
         isTerminalOpen={isTerminalOpen}
         onResetSimulation={handleResetSimulation}
         optionalTelemetrySettings={optionalTelemetrySettings}
+        onOpenSyncModal={() => setIsSyncModalOpen(true)}
+        syncConnected={globalTelemetrySync.isConnected()}
+        syncRole={syncMetrics.role}
       />
 
       {/* Main Dashboard Workspace Content Area */}
@@ -709,6 +877,7 @@ export default function App() {
               landingPrediction={overviewPrediction}
               onOpenLandingPredictor={() => setActiveTab('LANDING_PREDICTOR')}
               optionalTelemetrySettings={optionalTelemetrySettings}
+              onOpenSyncModal={() => setIsSyncModalOpen(true)}
             />
 
             {/* Top Mission Health & Landing Predictor Status Summary Strip (Desktop >= lg) */}
@@ -1002,6 +1171,9 @@ export default function App() {
                           onDisconnectLiveSerial={handleDisconnectLiveSerial}
                           isStale={isLiveStale}
                           packetAgeSeconds={packetAgeSeconds}
+                          onOpenSyncModal={() => setIsSyncModalOpen(true)}
+                          syncConnected={globalTelemetrySync.isConnected()}
+                          syncMetrics={syncMetrics}
                         />
                       </div>
                     )}
@@ -1120,6 +1292,9 @@ export default function App() {
                 onDisconnectLiveSerial={handleDisconnectLiveSerial}
                 isStale={isLiveStale}
                 packetAgeSeconds={packetAgeSeconds}
+                onOpenSyncModal={() => setIsSyncModalOpen(true)}
+                syncConnected={globalTelemetrySync.isConnected()}
+                syncMetrics={syncMetrics}
               />
 
               <PreflightChecklistPanel
@@ -1245,6 +1420,14 @@ export default function App() {
         onUpdateOverviewPrefs={handleUpdateOverviewPrefs}
         optionalTelemetrySettings={optionalTelemetrySettings}
         onUpdateOptionalTelemetrySettings={handleUpdateOptionalTelemetrySettings}
+      />
+
+      {/* Cloud Relay Synchronization Modal */}
+      <SyncRelayModal
+        isOpen={isSyncModalOpen}
+        onClose={() => setIsSyncModalOpen(false)}
+        telemetrySource={telemetrySource}
+        onSelectSource={handleSelectSource}
       />
     </div>
   );

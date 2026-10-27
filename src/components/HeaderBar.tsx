@@ -12,6 +12,9 @@ import {
   Usb,
   Crosshair,
   LayoutDashboard,
+  Cloud,
+  Eye,
+  Globe,
 } from 'lucide-react';
 import {
   ActiveTab,
@@ -39,6 +42,9 @@ interface HeaderBarProps {
   isTerminalOpen: boolean;
   onResetSimulation: () => void;
   optionalTelemetrySettings?: OptionalTelemetrySettings;
+  onOpenSyncModal?: () => void;
+  syncConnected?: boolean;
+  syncRole?: 'publisher' | 'viewer' | 'none';
 }
 
 const IST_TIME_FORMATTER = new Intl.DateTimeFormat('en-GB', {
@@ -120,6 +126,9 @@ export const HeaderBar: React.FC<HeaderBarProps> = ({
   isTerminalOpen,
   onResetSimulation,
   optionalTelemetrySettings,
+  onOpenSyncModal,
+  syncConnected,
+  syncRole,
 }) => {
   const [istClock, setIstClock] = useState<{
     timeLabel: string;
@@ -270,7 +279,7 @@ export const HeaderBar: React.FC<HeaderBarProps> = ({
 
         {/* Right: Data Source Switcher, Telemetry Freshness, Clocks & Actions */}
         <div className="flex items-center gap-1 sm:gap-1.5 xl:gap-2 shrink-0">
-          {/* Source Mode Selector Pill (Strict Isolation between SIMULATION and LIVE_SERIAL) */}
+          {/* Source Mode Selector Pill (Strict Isolation between SIMULATION, LIVE_SERIAL, and REMOTE_VIEWER) */}
           <div
             role="group"
             aria-label="Telemetry Data Source"
@@ -281,7 +290,7 @@ export const HeaderBar: React.FC<HeaderBarProps> = ({
               onClick={() => onSelectSource('SIMULATION')}
               title="Switch to Isolated In-Browser 10Hz Flight Simulator"
               className={`px-2 xl:px-2.5 py-1 rounded-[var(--radius-xs)] flex items-center gap-1 sm:gap-1.5 cursor-pointer transition-colors shrink-0 whitespace-nowrap ${
-                isSim
+                telemetrySource === 'SIMULATION'
                   ? 'bg-[var(--bg-surface-1)] text-[var(--accent-cobalt)] font-semibold shadow-[var(--shadow-xs)]'
                   : 'text-[var(--text-tertiary)] hover:text-[var(--text-primary)]'
               }`}
@@ -295,7 +304,7 @@ export const HeaderBar: React.FC<HeaderBarProps> = ({
               onClick={() => onSelectSource('LIVE_SERIAL')}
               title="Switch to Live USB-Serial Receiver (115200 8N1, Receive-Only)"
               className={`px-2 xl:px-2.5 py-1 rounded-[var(--radius-xs)] flex items-center gap-1 sm:gap-1.5 cursor-pointer transition-colors shrink-0 whitespace-nowrap ${
-                !isSim
+                telemetrySource === 'LIVE_SERIAL'
                   ? 'bg-[var(--accent-teal)] text-white font-semibold shadow-[var(--shadow-xs)]'
                   : 'text-[var(--text-tertiary)] hover:text-[var(--text-primary)]'
               }`}
@@ -305,10 +314,24 @@ export const HeaderBar: React.FC<HeaderBarProps> = ({
               <span className="hidden xl:inline whitespace-nowrap">Live USB Serial</span>
               <span className="hidden sm:inline xl:hidden whitespace-nowrap">Live Serial</span>
             </button>
+            <button
+              type="button"
+              onClick={() => onSelectSource('REMOTE_VIEWER')}
+              title="Switch to Remote Spectator Mode (Real-Time Cloud Relay)"
+              className={`px-2 xl:px-2.5 py-1 rounded-[var(--radius-xs)] flex items-center gap-1 sm:gap-1.5 cursor-pointer transition-colors shrink-0 whitespace-nowrap ${
+                telemetrySource === 'REMOTE_VIEWER'
+                  ? 'bg-[var(--accent-cobalt)] text-white font-semibold shadow-[var(--shadow-xs)]'
+                  : 'text-[var(--text-tertiary)] hover:text-[var(--text-primary)]'
+              }`}
+            >
+              <Globe className="w-3.5 h-3.5 shrink-0" />
+              <span className="sm:hidden text-[10px] font-mono-data">SYNC</span>
+              <span className="hidden sm:inline whitespace-nowrap">Remote Viewer</span>
+            </button>
           </div>
 
           {/* Link Health & Freshness Status Badge (Desktop >= sm) */}
-          {isSim ? (
+          {telemetrySource === 'SIMULATION' ? (
             <div
               className="hidden xl:flex items-center gap-1.5 px-2 xl:px-2.5 py-1 bg-[var(--status-info-bg)] border border-[var(--accent-cobalt)]/20 text-[11px] font-mono-data text-[var(--accent-cobalt)] rounded-[var(--radius-sm)] shrink-0 whitespace-nowrap"
               title="Telemetry Source: Local 10Hz Physics Simulator (Isolated from Live Hardware)"
@@ -317,6 +340,28 @@ export const HeaderBar: React.FC<HeaderBarProps> = ({
               <span className="font-semibold whitespace-nowrap">SIMULATED</span>
               <span className="opacity-60">•</span>
               <span className="tabular-nums whitespace-nowrap">10 Hz</span>
+            </div>
+          ) : telemetrySource === 'REMOTE_VIEWER' ? (
+            <div
+              className={`hidden lg:flex items-center gap-1.5 px-2 xl:px-2.5 py-1 border text-[11px] font-mono-data rounded-[var(--radius-sm)] shrink-0 whitespace-nowrap ${
+                syncConnected && !isStale && latestPacket
+                  ? 'bg-[var(--accent-cobalt-soft)] text-[var(--accent-cobalt)] border-[var(--accent-cobalt)]/30'
+                  : isStale
+                  ? 'bg-[var(--status-warning-bg)] text-[var(--status-warning)] border-[var(--status-warning)]/30'
+                  : 'bg-[var(--bg-surface-2)] text-[var(--text-secondary)] border-[var(--border-subtle)]'
+              }`}
+              title={`Remote Viewer Sync | Role: ${syncRole || 'viewer'} | Packet Age: ${packetAgeSeconds !== null ? `${packetAgeSeconds.toFixed(1)}s` : '--'}`}
+            >
+              <Cloud className="w-3.5 h-3.5 shrink-0" />
+              <span className="font-semibold whitespace-nowrap">
+                {!syncConnected
+                  ? 'SYNC OFFLINE'
+                  : !latestPacket
+                  ? 'AWAITING SNAPSHOT'
+                  : isStale
+                  ? `REMOTE STALE (${packetAgeSeconds !== null ? `${packetAgeSeconds.toFixed(1)}s` : '--'})`
+                  : `REMOTE RX (${packetAgeSeconds !== null ? `${packetAgeSeconds.toFixed(1)}s` : '0.0s'})`}
+              </span>
             </div>
           ) : (
             <div
@@ -431,6 +476,31 @@ export const HeaderBar: React.FC<HeaderBarProps> = ({
             <Terminal className="w-4 h-4" />
           </button>
 
+          {/* Real-Time Telemetry Synchronization / Cloud Relay */}
+          {onOpenSyncModal && (
+            <button
+              type="button"
+              onClick={onOpenSyncModal}
+              title={
+                syncConnected
+                  ? `Cloud Sync Active (${syncRole?.toUpperCase()}) — Click to view session metrics`
+                  : 'Configure Cloud Telemetry Relay (Publisher / Remote Viewer)'
+              }
+              className={`p-1.5 transition-colors cursor-pointer border rounded-[var(--radius-sm)] shrink-0 flex items-center gap-1 ${
+                syncConnected
+                  ? syncRole === 'publisher'
+                    ? 'text-[var(--accent-teal)] bg-[var(--accent-teal)]/15 border-[var(--accent-teal)]/40 font-semibold'
+                    : 'text-[var(--accent-cobalt)] bg-[var(--accent-cobalt-soft)] border-[var(--accent-cobalt)]/40 font-semibold'
+                  : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-surface-2)] border-[var(--border-subtle)]'
+              }`}
+            >
+              <Cloud className="w-4 h-4" />
+              <span className="hidden 2xl:inline text-[10px] font-mono-data uppercase">
+                {syncConnected ? (syncRole === 'publisher' ? 'RELAY' : 'VIEW') : 'SYNC'}
+              </span>
+            </button>
+          )}
+
           {/* Settings Modal Toggle */}
           <button
             type="button"
@@ -450,10 +520,29 @@ export const HeaderBar: React.FC<HeaderBarProps> = ({
       >
         <div className="flex items-center gap-1.5 min-w-0 shrink-0">
           {/* Link & Freshness Status */}
-          {isSim ? (
+          {telemetrySource === 'SIMULATION' ? (
             <span className="inline-flex items-center gap-1 px-1.5 py-0.5 bg-[var(--status-info-bg)] text-[var(--accent-cobalt)] border border-[var(--accent-cobalt)]/25 rounded-[var(--radius-xs)] font-semibold whitespace-nowrap">
               <span className="w-1.5 h-1.5 rounded-full bg-[var(--accent-cobalt)]" />
               SIM 10Hz
+            </span>
+          ) : telemetrySource === 'REMOTE_VIEWER' ? (
+            <span
+              className={`inline-flex items-center gap-1 px-1.5 py-0.5 border rounded-[var(--radius-xs)] font-semibold whitespace-nowrap ${
+                syncConnected && !isStale && latestPacket
+                  ? 'bg-[var(--accent-cobalt-soft)] text-[var(--accent-cobalt)] border-[var(--accent-cobalt)]/30'
+                  : isStale
+                  ? 'bg-[var(--status-warning-bg)] text-[var(--status-warning)] border-[var(--status-warning)]/40'
+                  : 'bg-[var(--bg-surface-2)] text-[var(--text-secondary)] border-[var(--border-subtle)]'
+              }`}
+            >
+              <Cloud className="w-3 h-3 shrink-0" />
+              {!syncConnected
+                ? 'SYNC OFF'
+                : !latestPacket
+                ? 'SYNC AWAIT'
+                : isStale
+                ? `STALE (${packetAgeSeconds !== null ? `${packetAgeSeconds.toFixed(1)}s` : '--'})`
+                : `SYNC (${packetAgeSeconds !== null ? `${packetAgeSeconds.toFixed(1)}s` : '0.0s'})`}
             </span>
           ) : (
             <span

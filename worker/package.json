@@ -1,0 +1,17 @@
+{
+  "name": "can7usat-telemetry-sync-worker",
+  "version": "1.0.0",
+  "description": "Cloudflare Worker & Durable Object for CAN-7USAT secure real-time multi-device telemetry synchronization",
+  "main": "src/index.ts",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "types": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20261027.1",
+    "typescript": "^5.8.2",
+    "wrangler": "^4.153.0"
+  }
+}

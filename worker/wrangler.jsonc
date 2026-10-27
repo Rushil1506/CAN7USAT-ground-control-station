@@ -1,0 +1,31 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "can7usat-telemetry-sync",
+  "main": "src/index.ts",
+  "compatibility_date": "2025-02-24",
+  "compatibility_flags": [
+    "nodejs_compat"
+  ],
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "TELEMETRY_RELAY_DO",
+        "class_name": "TelemetryRelayDO"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": [
+        "TelemetryRelayDO"
+      ]
+    }
+  ],
+  "vars": {
+    "ALLOWED_ORIGINS": "https://can7usat-ground-control-station.pages.dev,http://localhost:5173",
+    "MAX_PAYLOAD_BYTES": 65536,
+    "HEARTBEAT_TIMEOUT_MS": 5000,
+    "DEFAULT_MISSION_ID": "CAN-7USAT-017"
+  }
+}

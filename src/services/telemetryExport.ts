@@ -114,7 +114,12 @@ export function exportTelemetryPacketsToCsv(
   const isSim = telemetrySource === 'SIMULATION';
   const csvText = formatTelemetryPacketsCsv(historyPackets, telemetrySource);
 
-  const prefix = isSim ? 'CANSAT_SIM_TELEMETRY_LOG' : 'CANSAT_LIVE_SERIAL_LOG';
+  const prefix =
+    isSim
+      ? 'CANSAT_SIM_TELEMETRY_LOG'
+      : telemetrySource === 'REMOTE_VIEWER'
+      ? 'CANSAT_REMOTE_SYNC_LOG'
+      : 'CANSAT_LIVE_SERIAL_LOG';
   const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
   const filename = customFilename ?? `${prefix}_${timestamp}.csv`;
 

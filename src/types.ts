@@ -40,7 +40,7 @@ export interface FirmwareFlightStateInfo {
   bgGlow: string;
 }
 
-export type TelemetrySource = 'SIMULATION' | 'LIVE_SERIAL';
+export type TelemetrySource = 'SIMULATION' | 'LIVE_SERIAL' | 'REMOTE_VIEWER';
 
 export type SerialConnectionState =
   | 'DISCONNECTED'

@@ -3,6 +3,8 @@
  * These control only which widgets this browser renders; they never configure onboard hardware.
  */
 
+import { TelemetrySource } from '../types';
+
 export type OverviewWidgetId =
   | 'missionStrip'
   | 'landingPrediction'
@@ -101,7 +103,7 @@ export function getBrowserStorage(): StorageLike | null {
 export function isOverviewWidgetVisible(
   prefs: OverviewPreferences,
   id: OverviewWidgetId,
-  telemetrySource: 'SIMULATION' | 'LIVE_SERIAL'
+  telemetrySource: TelemetrySource
 ): boolean {
   const def = OVERVIEW_WIDGETS.find((w) => w.id === id);
   if (def?.onlyIn === 'SIMULATION' && telemetrySource !== 'SIMULATION') return false;
@@ -110,7 +112,7 @@ export function isOverviewWidgetVisible(
 
 /** Whether a live-link alert must be shown even though the link-status widget is hidden. */
 export function shouldShowLinkAlertBanner(args: {
-  telemetrySource: 'SIMULATION' | 'LIVE_SERIAL';
+  telemetrySource: TelemetrySource;
   linkWidgetVisible: boolean;
   serialState: string;
   isStale: boolean;
