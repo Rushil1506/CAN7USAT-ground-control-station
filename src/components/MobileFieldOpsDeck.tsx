@@ -23,7 +23,6 @@ import {
   Volume2,
   Wind,
   X,
-  Cloud,
 } from 'lucide-react';
 import {
   FlightStateCode,
@@ -68,7 +67,6 @@ export interface MobileFieldOpsDeckProps {
   landingPrediction: PredictionResponsePayload | null;
   onOpenLandingPredictor: () => void;
   optionalTelemetrySettings: OptionalTelemetrySettings;
-  onOpenSyncModal?: () => void;
 }
 
 function computeRangeAndBearing(
@@ -123,7 +121,6 @@ export const MobileFieldOpsDeck: React.FC<MobileFieldOpsDeckProps> = ({
   landingPrediction,
   onOpenLandingPredictor,
   optionalTelemetrySettings,
-  onOpenSyncModal,
 }) => {
   const isSim = telemetrySource === 'SIMULATION';
   const webSerialSupport = useMemo(() => describeWebSerialSupport(), []);
@@ -317,32 +314,20 @@ export const MobileFieldOpsDeck: React.FC<MobileFieldOpsDeckProps> = ({
       <div className="ops-card p-2.5 sm:p-3 flex flex-col gap-2.5">
         <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--border-subtle)] pb-2">
           <div className="flex items-center gap-2">
-            {telemetrySource === 'SIMULATION' ? (
+            {isSim ? (
               <Activity className="w-4 h-4 text-[var(--accent-cobalt)] shrink-0" />
-            ) : telemetrySource === 'REMOTE_VIEWER' ? (
-              <Cloud className="w-4 h-4 text-[var(--accent-cobalt)] shrink-0" />
             ) : (
               <Radio className="w-4 h-4 text-[var(--accent-teal)] shrink-0" />
             )}
             <div>
               <div className="text-xs font-bold text-[var(--text-primary)] leading-tight flex items-center gap-1.5">
                 <span>
-                  {telemetrySource === 'SIMULATION'
-                    ? 'Flight Simulator & Controls'
-                    : telemetrySource === 'REMOTE_VIEWER'
-                    ? 'Remote Spectator View'
-                    : 'Live USB-Serial Telemetry Link'}
+                  {isSim ? 'Flight Simulator & Controls' : 'Live USB-Serial Telemetry Link'}
                 </span>
                 <span
                   className={`font-mono-data text-[10px] px-1.5 py-0.5 rounded-[var(--radius-xs)] border font-semibold ${
-                    telemetrySource === 'SIMULATION'
+                    isSim
                       ? 'bg-[var(--status-info-bg)] text-[var(--accent-cobalt)] border-[var(--accent-cobalt)]/25'
-                      : telemetrySource === 'REMOTE_VIEWER'
-                      ? hasPacket && !isStale
-                        ? 'bg-[var(--accent-cobalt-soft)] text-[var(--accent-cobalt)] border-[var(--accent-cobalt)]/30'
-                        : isStale
-                        ? 'bg-[var(--status-warning-bg)] text-[var(--status-warning)] border-[var(--status-warning)]/40'
-                        : 'bg-[var(--bg-surface-2)] text-[var(--text-secondary)] border-[var(--border-subtle)]'
                       : serialState === 'CONNECTED' && !isStale && hasPacket
                       ? 'bg-[var(--status-nominal-bg)] text-[var(--status-nominal)] border-[var(--status-nominal)]/30'
                       : isStale || serialState === 'ERROR'
@@ -350,16 +335,10 @@ export const MobileFieldOpsDeck: React.FC<MobileFieldOpsDeckProps> = ({
                       : 'bg-[var(--bg-surface-2)] text-[var(--text-secondary)] border-[var(--border-subtle)]'
                   }`}
                 >
-                  {telemetrySource === 'SIMULATION'
+                  {isSim
                     ? isSimulating
                       ? 'SIM RUNNING (10Hz)'
                       : 'SIM PAUSED'
-                    : telemetrySource === 'REMOTE_VIEWER'
-                    ? !hasPacket
-                      ? 'AWAITING SNAPSHOT'
-                      : isStale
-                      ? 'REMOTE STALE'
-                      : 'REMOTE SYNC'
                     : serialState !== 'CONNECTED'
                     ? `USB ${serialState}`
                     : !hasPacket
@@ -370,10 +349,8 @@ export const MobileFieldOpsDeck: React.FC<MobileFieldOpsDeckProps> = ({
                 </span>
               </div>
               <div className="text-[10px] text-[var(--text-secondary)] font-mono-data mt-0.5">
-                {telemetrySource === 'SIMULATION'
+                {isSim
                   ? 'Isolated local 10Hz physics simulator • No hardware connected'
-                  : telemetrySource === 'REMOTE_VIEWER'
-                  ? 'Live cloud relay stream • Strictly read-only spectator view'
                   : `${portLabel} • ${liveBaudRate} 8N1 • Receive-Only (No Telecommands)`}
               </div>
             </div>
@@ -413,28 +390,8 @@ export const MobileFieldOpsDeck: React.FC<MobileFieldOpsDeckProps> = ({
           </div>
         </div>
 
-        {/* Mode-Specific Controls: REMOTE_VIEWER vs LIVE_SERIAL vs SIMULATION */}
-        {telemetrySource === 'REMOTE_VIEWER' ? (
-          <div className="flex flex-col gap-2 p-2.5 bg-[var(--bg-surface-2)] border border-[var(--border-subtle)] rounded-[var(--radius-sm)] text-[11px] font-mono-data text-[var(--text-secondary)]">
-            <div className="flex items-center gap-2 text-[var(--accent-cobalt)] font-semibold">
-              <Cloud className="w-4 h-4 shrink-0" />
-              <span>REMOTE SPECTATOR MODE (READ-ONLY)</span>
-            </div>
-            <p className="text-[10px] text-[var(--text-tertiary)] leading-snug">
-              Connected to Cloudflare relay. You are viewing live telemetry in real-time. Hardware telecommands, target adjustments, and USB serial links are strictly locked on remote devices.
-            </p>
-            {onOpenSyncModal && (
-              <button
-                type="button"
-                onClick={onOpenSyncModal}
-                className="mt-1 px-3 py-1.5 bg-[var(--accent-cobalt)] text-white text-xs font-semibold rounded-[var(--radius-xs)] hover:bg-[var(--accent-cobalt-hover)] flex items-center justify-center gap-1.5 cursor-pointer"
-              >
-                <Cloud className="w-3.5 h-3.5" />
-                <span>Configure Relay / Connection</span>
-              </button>
-            )}
-          </div>
-        ) : !isSim ? (
+        {/* Mode-Specific Controls: LIVE_SERIAL vs SIMULATION */}
+        {!isSim ? (
           <div className="flex flex-col gap-2">
             {/* Browser Web Serial Compatibility Banner (Truthful on Mobile) */}
             {!webSerialSupport.supported && (
@@ -905,20 +862,14 @@ export const MobileFieldOpsDeck: React.FC<MobileFieldOpsDeckProps> = ({
                 <Target className="w-3 h-3 text-[var(--accent-amber)]" />
                 Target Landing Point
               </span>
-              {telemetrySource !== 'REMOTE_VIEWER' ? (
-                <button
-                  type="button"
-                  onClick={handleOpenTargetEditor}
-                  data-testid="mobile-edit-target-btn"
-                  className="min-h-[26px] px-2 py-0.5 bg-[var(--bg-surface-1)] hover:bg-[var(--bg-surface-elevated)] text-[var(--accent-cobalt)] border border-[var(--border-subtle)] rounded-[var(--radius-xs)] text-[10px] font-semibold cursor-pointer"
-                >
-                  {targetLat !== null ? 'Edit Target' : 'Set Target'}
-                </button>
-              ) : (
-                <span className="text-[10px] font-mono-data text-[var(--text-tertiary)] italic px-1">
-                  Target Locked
-                </span>
-              )}
+              <button
+                type="button"
+                onClick={handleOpenTargetEditor}
+                data-testid="mobile-edit-target-btn"
+                className="min-h-[26px] px-2 py-0.5 bg-[var(--bg-surface-1)] hover:bg-[var(--bg-surface-elevated)] text-[var(--accent-cobalt)] border border-[var(--border-subtle)] rounded-[var(--radius-xs)] text-[10px] font-semibold cursor-pointer"
+              >
+                {targetLat !== null ? 'Edit Target' : 'Set Target'}
+              </button>
             </div>
 
             <div className="font-mono-data text-xs font-bold text-[var(--text-primary)] tabular-nums">

@@ -18,11 +18,6 @@ export function getLogBadgeLabel(
   fallbackSource: TelemetrySource = 'SIMULATION'
 ): string {
   const entrySource = log.source ?? fallbackSource;
-  if (entrySource === 'REMOTE_VIEWER') {
-    if (log.type === 'err') return 'REMOTE-ERR';
-    if (log.type === 'sys') return 'REMOTE-SYS';
-    return 'REMOTE-RX';
-  }
   const entryIsSim = entrySource === 'SIMULATION';
   if (log.type === 'err') return entryIsSim ? 'SIM-ERR' : 'LIVE-ERR';
   if (log.type === 'sys') return entryIsSim ? 'SIM-SYS' : 'LIVE-SYS';
@@ -46,14 +41,6 @@ export function getTerminalFilterTabs(
       { key: 'sys', label: 'SYS' },
     ];
   }
-  if (telemetrySource === 'REMOTE_VIEWER') {
-    return [
-      { key: 'all', label: 'ALL' },
-      { key: 'rx', label: 'REMOTE RX' },
-      { key: 'err', label: 'ERR' },
-      { key: 'sys', label: 'SYS' },
-    ];
-  }
   return [
     { key: 'all', label: 'ALL' },
     { key: 'rx', label: 'LIVE RX' },
@@ -68,14 +55,12 @@ export function filterLogsBySource(
   filterType: 'all' | 'rx' | 'tx' | 'sys' | 'err' = 'all'
 ): RawLogEntry[] {
   const effectiveFilter =
-    (telemetrySource === 'LIVE_SERIAL' || telemetrySource === 'REMOTE_VIEWER') && filterType === 'tx'
-      ? 'all'
-      : filterType;
+    telemetrySource === 'LIVE_SERIAL' && filterType === 'tx' ? 'all' : filterType;
 
   return rawLogEntries.filter((entry) => {
     const entrySource = entry.source ?? 'SIMULATION';
     if (entrySource !== telemetrySource) return false;
-    if ((telemetrySource === 'LIVE_SERIAL' || telemetrySource === 'REMOTE_VIEWER') && entry.type === 'tx') return false;
+    if (telemetrySource === 'LIVE_SERIAL' && entry.type === 'tx') return false;
     if (effectiveFilter === 'all') return true;
     return entry.type === effectiveFilter;
   });
@@ -362,11 +347,6 @@ export const TerminalDrawer: React.FC<TerminalDrawerProps> = ({
         <div className="flex items-center gap-1.5 text-[var(--action-amber)] font-mono-data text-xs font-bold shrink-0">
           {isSim ? (
             <span>SIM_CMD&gt;</span>
-          ) : telemetrySource === 'REMOTE_VIEWER' ? (
-            <span className="flex items-center gap-1 text-[var(--text-tertiary)]">
-              <Lock className="w-3.5 h-3.5 text-[var(--accent-cobalt)]" />
-              REMOTE_VIEW&gt;
-            </span>
           ) : (
             <span className="flex items-center gap-1 text-[var(--text-tertiary)]">
               <Lock className="w-3.5 h-3.5 text-[var(--status-alert)]" />
@@ -382,18 +362,12 @@ export const TerminalDrawer: React.FC<TerminalDrawerProps> = ({
           placeholder={
             isSim
               ? 'Enter command for local simulator (e.g. CMD,2026-IN-SPACe-CAN-7USAT-017,CALIBRATE,1)'
-              : telemetrySource === 'REMOTE_VIEWER'
-              ? 'Command transmission is strictly disabled in Remote Viewer mode'
               : 'Hardware telecommand transmission is disabled in Live Serial receive-only mode'
           }
           className="flex-1 min-w-[200px] bg-[var(--bg-base)] border border-[var(--border-subtle)] focus:border-[var(--border-amber)] text-[var(--text-primary)] font-mono-data text-xs px-2.5 py-1.5 outline-none rounded-[var(--radius-sm)] disabled:opacity-50 disabled:cursor-not-allowed"
         />
         <span className="hidden lg:inline-block font-mono-data text-[9px] text-[var(--text-tertiary)] shrink-0">
-          {isSim
-            ? 'LOCAL SIMULATOR ONLY (NO RF TX)'
-            : telemetrySource === 'REMOTE_VIEWER'
-            ? 'READ-ONLY SPECTATOR'
-            : 'SERIAL TX DISABLED'}
+          {isSim ? 'LOCAL SIMULATOR ONLY (NO RF TX)' : 'SERIAL TX DISABLED'}
         </span>
         <button
           type="submit"

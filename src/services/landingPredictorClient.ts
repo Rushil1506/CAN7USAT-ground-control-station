@@ -517,7 +517,7 @@ export function computeLocalPhysicsPrediction(
   isStaleOverride = false
 ): PredictionResponsePayload {
   const sourceLabel: 'LIVE' | 'SIMULATION' =
-    telemetrySource === 'LIVE_SERIAL' || telemetrySource === 'REMOTE_VIEWER' ? 'LIVE' : 'SIMULATION';
+    telemetrySource === 'LIVE_SERIAL' ? 'LIVE' : 'SIMULATION';
 
   const observabilityNotes = {
     observable_from_telemetry: [
@@ -1014,7 +1014,7 @@ export async function evaluateLandingPredictionWithBackend(
 }> {
   const recentSlice = historyPackets.slice(-150);
   const sourceLabel: 'LIVE' | 'SIMULATION' =
-    telemetrySource === 'LIVE_SERIAL' || telemetrySource === 'REMOTE_VIEWER' ? 'LIVE' : 'SIMULATION';
+    telemetrySource === 'LIVE_SERIAL' ? 'LIVE' : 'SIMULATION';
 
   const pointsPayload = recentSlice.map((pkt) => ({
     timestamp_s: resolvePacketTimestampSeconds(pkt, telemetrySource),

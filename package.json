@@ -10,7 +10,7 @@
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit",
-    "test": "node --import tsx --test src/services/__tests__/telemetryParser.test.ts src/services/__tests__/landingPredictorClient.test.ts src/services/__tests__/gcsAuditRegressions.test.ts src/services/__tests__/offlineMapPacks.test.ts src/services/__tests__/telemetrySync.test.ts"
+    "test": "node --import tsx --test src/services/__tests__/telemetryParser.test.ts src/services/__tests__/landingPredictorClient.test.ts src/services/__tests__/gcsAuditRegressions.test.ts src/services/__tests__/offlineMapPacks.test.ts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",
