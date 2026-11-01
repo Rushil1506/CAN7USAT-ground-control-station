@@ -13,6 +13,7 @@ import {
   Square,
   RotateCcw,
   Compass,
+  Crosshair,
   Search,
   List,
   Layers,
@@ -38,6 +39,8 @@ export interface TerminalDrawerProps {
   onSendCommand: (cmd: string) => void | Promise<void>;
   onClearLogs: () => void;
   isDockedDesktop?: boolean;
+  targetLat?: number | null;
+  targetLon?: number | null;
 }
 
 export function getLogBadgeLabel(
@@ -104,6 +107,8 @@ export const TerminalDrawer: React.FC<TerminalDrawerProps> = ({
   onSendCommand,
   onClearLogs,
   isDockedDesktop = false,
+  targetLat = null,
+  targetLon = null,
 }) => {
   const [inputCommand, setInputCommand] = useState('');
   const [filterType, setFilterType] = useState<'all' | 'rx' | 'tx' | 'sys' | 'err'>('all');
@@ -459,6 +464,31 @@ export const TerminalDrawer: React.FC<TerminalDrawerProps> = ({
             <RotateCcw className="w-3 h-3 text-[var(--action-amber)]" />
             <span>CALIB IMU</span>
           </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              if (typeof targetLat === 'number' && typeof targetLon === 'number') {
+                handleSend(`GPS:${targetLat.toFixed(6)},${targetLon.toFixed(6)}`);
+              } else {
+                setInputCommand('GPS:13.347500,74.792100');
+              }
+            }}
+            disabled={Boolean(txPending)}
+            title={
+              typeof targetLat === 'number' && typeof targetLon === 'number'
+                ? `Send 'GPS:${targetLat.toFixed(6)},${targetLon.toFixed(6)}' target uplink to CanSat`
+                : "Pre-fill target coordinate uplink (e.g. GPS:13.347500,74.792100)"
+            }
+            className="px-2 py-1 bg-[var(--bg-surface-2)] hover:bg-[var(--bg-surface-hover)] text-[var(--accent-teal)] border border-[var(--border-subtle)] rounded-[var(--radius-xs)] font-medium cursor-pointer transition-colors flex items-center gap-1 text-[10px] disabled:opacity-50"
+          >
+            <Crosshair className="w-3 h-3 text-[var(--accent-teal)]" />
+            <span>
+              {typeof targetLat === 'number' && typeof targetLon === 'number'
+                ? `GPS TGT (${targetLat.toFixed(4)}, ${targetLon.toFixed(4)})`
+                : 'GPS TARGET'}
+            </span>
+          </button>
         </div>
 
         {/* Filter and Search controls */}
@@ -690,8 +720,8 @@ export const TerminalDrawer: React.FC<TerminalDrawerProps> = ({
           onChange={(e) => setInputCommand(e.target.value)}
           placeholder={
             isSim
-              ? 'Enter command (e.g. START, STOP, CAL, TARE, or CMD,2026-IN-SPACe-CAN-7USAT-017,...)'
-              : 'Enter hardware telecommand (e.g. START, STOP, TARE, CAL) @ 115200 baud'
+              ? 'Enter command (e.g. START, STOP, GPS:13.347500,74.792100, TARE, CAL)'
+              : 'Enter bridge telecommand (e.g. GPS:<lat>,<lon>, START, STOP, TARE, CAL) @ 115200 baud'
           }
           className="flex-1 min-w-[200px] bg-[var(--bg-base)] border border-[var(--border-subtle)] focus:border-[var(--border-amber)] text-[var(--text-primary)] font-mono-data text-xs px-2.5 py-1.5 outline-none rounded-[var(--radius-sm)]"
         />

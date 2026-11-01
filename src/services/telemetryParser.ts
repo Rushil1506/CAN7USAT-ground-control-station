@@ -443,8 +443,9 @@ export function parseFirmwareControlLine(inputLine: string): FirmwareControlMess
     if (payload.startsWith('VBAT_RESET=')) {
       return { kind: 'ACK', category: 'VBAT_RESET', rawLine, payload };
     }
-    if (payload.startsWith('TARGET_GPS=')) {
-      const rest = payload.slice('TARGET_GPS='.length);
+    if (payload.startsWith('TARGET_GPS=') || payload.startsWith('GPS=')) {
+      const prefix = payload.startsWith('TARGET_GPS=') ? 'TARGET_GPS=' : 'GPS=';
+      const rest = payload.slice(prefix.length);
       const parts = rest.split(',');
       const lat = parts.length >= 1 ? Number(parts[0]) : NaN;
       const lon = parts.length >= 2 ? Number(parts[1]) : NaN;

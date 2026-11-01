@@ -387,9 +387,45 @@ export const SerialLinkPanel: React.FC<SerialLinkPanelProps> = ({
             </div>
           </div>
 
+          {/* Ground Station Transceiver Bridge - Team 017 */}
+          <div className="px-2.5 py-2 bg-[var(--bg-base)] border border-[var(--border-subtle)] rounded-[var(--radius-xs)] text-[9px] font-mono-data space-y-1.5">
+            <div className="flex justify-between items-center text-[var(--text-secondary)] font-bold border-b border-[var(--border-muted)]/60 pb-1">
+              <span className="flex items-center gap-1 text-[var(--action-amber)]">
+                <Radio className="w-3 h-3" />
+                <span>GROUND TRANSCEIVER BRIDGE</span>
+              </span>
+              <span className="text-[var(--text-primary)]">UNO R3 + Ra-08H</span>
+            </div>
+            <div className="grid grid-cols-2 gap-x-2 gap-y-0.5 text-[8.5px] text-[var(--text-secondary)]">
+              <div>
+                <span className="text-[var(--text-tertiary)]">RX (Telemetry): </span>
+                <span className="text-[var(--status-nominal)] font-bold">Ra-08H TXD &rarr; Uno Pin 1</span>
+              </div>
+              <div>
+                <span className="text-[var(--text-tertiary)]">TX (Commands): </span>
+                <span className="text-[var(--action-amber)] font-bold">Uno Pin 2 &rarr; Ra-08H RXD</span>
+              </div>
+              <div>
+                <span className="text-[var(--text-tertiary)]">Drive Method: </span>
+                <span>Pin 2 CMOS 40mA (0.0V LOW)</span>
+              </div>
+              <div>
+                <span className="text-[var(--text-tertiary)]">Module Switch: </span>
+                <span className="text-[var(--status-nominal)] font-bold">BOOT / UART-RX</span>
+              </div>
+            </div>
+            <div className="pt-0.5 text-[8.5px] text-[var(--text-tertiary)] border-t border-[var(--border-muted)]/40 flex flex-wrap gap-x-2 gap-y-0.5">
+              <span>Bridge Commands:</span>
+              <span className="text-[var(--text-primary)] font-bold">1. GPS:&lt;lat&gt;,&lt;lon&gt;</span>
+              <span className="text-[var(--status-nominal)] font-bold">2. START</span>
+              <span className="text-[var(--status-alert)] font-bold">3. STOP</span>
+              <span className="text-[var(--text-tertiary)]">(115200 8N1 CRLF)</span>
+            </div>
+          </div>
+
           {/* FSW Wire Contract Note */}
           <div className="px-2 py-1 bg-[var(--bg-base)] border border-[var(--border-subtle)] rounded-[var(--radius-xs)] text-[9px] font-mono-data text-[var(--text-tertiary)] leading-tight">
-            FSW Contract: 18-Field Extended / 15-Field Competition CSV (MS5611 + MPU6050 + NEO-M9N) @ 1Hz. Bidirectional Uplink enabled (START / STOP / TARE / CAL).
+            FSW Contract: 18-Field Extended / 15-Field Competition CSV (MS5611 + MPU6050 + NEO-M9N) @ 1Hz. Ra-08H LoRa Bridge: START, STOP, GPS:&lt;lat&gt;,&lt;lon&gt;, TARE, CAL.
           </div>
         </>
       )}

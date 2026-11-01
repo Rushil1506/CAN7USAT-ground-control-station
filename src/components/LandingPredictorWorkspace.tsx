@@ -12,6 +12,7 @@ import {
   Navigation,
   Radio,
   Satellite,
+  Send,
   Server,
   ShieldAlert,
   Sliders,
@@ -43,6 +44,7 @@ interface LandingPredictorWorkspaceProps {
   packetAgeSeconds: number | null;
   config?: PredictorConfigPayload;
   onUpdateConfig?: React.Dispatch<React.SetStateAction<PredictorConfigPayload>>;
+  onSendCommand?: (command: string) => void;
 }
 
 function isPacketGpsValid(
@@ -76,6 +78,7 @@ export const LandingPredictorWorkspace: React.FC<LandingPredictorWorkspaceProps>
   packetAgeSeconds,
   config: externalConfig,
   onUpdateConfig,
+  onSendCommand,
 }) => {
   const [internalConfig, setInternalConfig] = useState<PredictorConfigPayload>(() => ({
     ...DEFAULT_PREDICTOR_CONFIG,
@@ -1424,6 +1427,23 @@ export const LandingPredictorWorkspace: React.FC<LandingPredictorWorkspaceProps>
 
             {targetError && (
               <div className="text-[11px] text-[var(--status-alert)]">{targetError}</div>
+            )}
+
+            {config.target_lat_deg !== null && config.target_lon_deg !== null && onSendCommand && (
+              <div className="pt-1">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const cmd = `GPS:${config.target_lat_deg!.toFixed(6)},${config.target_lon_deg!.toFixed(6)}`;
+                    onSendCommand(cmd);
+                  }}
+                  title="Transmit target coordinate to CanSat via LoRa Ground Bridge (GPS:<lat>,<lon>)"
+                  className="w-full py-1.5 px-2 bg-[var(--status-nominal-bg)] hover:bg-[var(--status-nominal)] hover:text-white text-[var(--status-nominal)] border border-[var(--status-nominal)]/40 rounded-[var(--radius-xs)] font-mono-data text-[10.5px] font-bold cursor-pointer transition-colors flex items-center justify-center gap-1.5"
+                >
+                  <Send className="w-3.5 h-3.5" />
+                  <span>UPLINK TARGET VIA LORA (GPS:{config.target_lat_deg.toFixed(6)},{config.target_lon_deg.toFixed(6)})</span>
+                </button>
+              </div>
             )}
 
             {pred && pred.distance_to_target_m !== null && (

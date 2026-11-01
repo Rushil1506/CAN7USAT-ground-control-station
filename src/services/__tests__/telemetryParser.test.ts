@@ -870,6 +870,22 @@ describe('CAN7USAT_UNO.ino 15-Field Competition & 18-Field Extended Attitude Con
     const vbatAck = parseFirmwareControlLine('ACK:VBAT_RESET=8.20');
     assert.strictEqual(vbatAck?.category, 'VBAT_RESET');
   });
+
+  it('parses Ground Station Transceiver Bridge GPS target uplink ACKs', () => {
+    const gpsAck = parseFirmwareControlLine('ACK:GPS=13.347500,74.792100');
+    assert.ok(gpsAck !== null);
+    assert.strictEqual(gpsAck?.kind, 'ACK');
+    assert.strictEqual(gpsAck?.category, 'TARGET_GPS');
+    assert.strictEqual(gpsAck?.targetLatDeg, 13.3475);
+    assert.strictEqual(gpsAck?.targetLonDeg, 74.7921);
+
+    const targetGpsAck = parseFirmwareControlLine('ACK:TARGET_GPS=13.347500,74.792100');
+    assert.ok(targetGpsAck !== null);
+    assert.strictEqual(targetGpsAck?.kind, 'ACK');
+    assert.strictEqual(targetGpsAck?.category, 'TARGET_GPS');
+    assert.strictEqual(targetGpsAck?.targetLatDeg, 13.3475);
+    assert.strictEqual(targetGpsAck?.targetLonDeg, 74.7921);
+  });
 });
 
 

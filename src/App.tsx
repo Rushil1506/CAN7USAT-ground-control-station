@@ -503,6 +503,9 @@ export default function App() {
           addLog('[FSW_ACK:CALIB] ACK:CALIB=SAVED_EEPROM', 'rx', 'SIMULATION');
         } else if (upper.startsWith('TARE') || upper === 'ZERO' || upper === 'Z') {
           addLog('[FSW_ACK:TARE_HDG] ACK:TARE_HDG=0.0,OFFSET=0.0', 'rx', 'SIMULATION');
+        } else if (upper.startsWith('GPS:') || upper.startsWith('TARGET:')) {
+          const coords = trimmed.slice(trimmed.indexOf(':') + 1).trim();
+          addLog(`[FSW_ACK:TARGET_GPS] ACK:TARGET_GPS=${coords}`, 'rx', 'SIMULATION');
         } else {
           addLog(
             `[SIM_ACK] (${TEAM_INFO.id}) Command '${
@@ -1061,6 +1064,7 @@ export default function App() {
             packetAgeSeconds={packetAgeSeconds}
             config={predictorConfig}
             onUpdateConfig={setPredictorConfig}
+            onSendCommand={handleSendCommand}
           />
         )}
 
@@ -1256,6 +1260,8 @@ export default function App() {
               historyPackets={activeHistoryPackets}
               latestPacket={activeLatestPacket}
               onSendCommand={handleSendCommand}
+              targetLat={predictorConfig.target_lat_deg}
+              targetLon={predictorConfig.target_lon_deg}
               onClearLogs={() =>
                 setRawLogs((prev) =>
                   prev.filter((l) => (l.source ?? 'SIMULATION') !== telemetrySource)
@@ -1280,6 +1286,8 @@ export default function App() {
           historyPackets={activeHistoryPackets}
           latestPacket={activeLatestPacket}
           onSendCommand={handleSendCommand}
+          targetLat={predictorConfig.target_lat_deg}
+          targetLon={predictorConfig.target_lon_deg}
           onClearLogs={() =>
             setRawLogs((prev) =>
               prev.filter((l) => (l.source ?? 'SIMULATION') !== telemetrySource)

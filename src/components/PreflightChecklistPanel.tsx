@@ -50,6 +50,13 @@ export const FIELD_READINESS_ITEMS: FieldReadinessCheck[] = [
       'Ground station portable and ready to move along flight line or into field vehicle for distant touchdown recovery without losing session logs.',
     sectionRef: 'IN-SPACe Section 6.1.xii',
   },
+  {
+    id: 'ground_bridge',
+    title: 'Crowtail Ra-08H Ground Transceiver Bridge (Uno Pin 2)',
+    requirement:
+      'Arduino Uno R3 flashed with cycle-exact 115200 baud bridge sketch. Ra-08H TXD -> Pin 1, Ra-08H RXD -> Pin 2 (40mA CMOS 0.0V LOW), 3.3V/GND verified, slide switch on BOOT / UART-RX.',
+    sectionRef: 'Ground Bridge - Team 017',
+  },
 ];
 
 interface PreflightChecklistPanelProps {
