@@ -307,13 +307,14 @@ export default function App() {
       onControlMessage: (control, rawLine) => {
         const now = new Date();
         const timeStr = now.toISOString().split('T')[1].slice(0, 8);
+        const isBridge = control.category === 'BRIDGE_TX';
         setRawLogs((prev) => {
           const next: RawLogEntry[] = [
             ...prev,
             {
               time: timeStr,
-              text: `[FSW_${control.kind}:${control.category}] ${rawLine}`,
-              type: control.kind === 'ERR' ? 'err' : 'sys',
+              text: isBridge ? rawLine : `[FSW_${control.kind}:${control.category}] ${rawLine}`,
+              type: control.kind === 'ERR' ? 'err' : isBridge ? 'tx' : 'sys',
               source: 'LIVE_SERIAL',
             },
           ];

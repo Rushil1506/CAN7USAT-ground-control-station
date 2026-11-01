@@ -113,6 +113,7 @@ export interface FirmwareControlMessage {
     | 'TARE_HDG'
     | 'VBAT_RESET'
     | 'UNKNOWN_CMD'
+    | 'BRIDGE_TX'
     | 'GENERIC';
   rawLine: string;
   payload: string;
@@ -476,6 +477,31 @@ export function parseFirmwareControlLine(inputLine: string): FirmwareControlMess
       return { kind: 'ERR', category: 'UNKNOWN_CMD', rawLine, payload };
     }
     return { kind: 'ERR', category: 'GENERIC', rawLine, payload };
+  }
+
+  // Bridge transmit echo or debug confirmations (e.g. "[GS -> CANSAT] start" or raw loopback "start")
+  if (
+    rawLine.startsWith('[GS -> CANSAT]') ||
+    rawLine.startsWith('[GS->CANSAT]') ||
+    rawLine.startsWith('[BRIDGE') ||
+    rawLine.startsWith('[RADIO')
+  ) {
+    return {
+      kind: 'ACK',
+      category: 'BRIDGE_TX',
+      rawLine,
+      payload: rawLine,
+    };
+  }
+
+  const lower = rawLine.toLowerCase();
+  if (lower === 'start' || lower === 'stop' || lower === 'cal' || lower === 'tare' || lower.startsWith('gps:')) {
+    return {
+      kind: 'ACK',
+      category: 'BRIDGE_TX',
+      rawLine,
+      payload: rawLine,
+    };
   }
 
   return null;

@@ -886,6 +886,18 @@ describe('CAN7USAT_UNO.ino 15-Field Competition & 18-Field Extended Attitude Con
     assert.strictEqual(targetGpsAck?.targetLatDeg, 13.3475);
     assert.strictEqual(targetGpsAck?.targetLonDeg, 74.7921);
   });
+
+  it('parses Ground Station Transceiver Bridge transmit echo lines as BRIDGE_TX', () => {
+    const echoLine = parseFirmwareControlLine('[GS -> CANSAT] start');
+    assert.ok(echoLine !== null);
+    assert.strictEqual(echoLine?.kind, 'ACK');
+    assert.strictEqual(echoLine?.category, 'BRIDGE_TX');
+    assert.strictEqual(echoLine?.rawLine, '[GS -> CANSAT] start');
+
+    const rawEcho = parseFirmwareControlLine('start');
+    assert.ok(rawEcho !== null);
+    assert.strictEqual(rawEcho?.category, 'BRIDGE_TX');
+  });
 });
 
 
