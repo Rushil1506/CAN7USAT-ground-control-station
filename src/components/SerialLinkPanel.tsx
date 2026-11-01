@@ -347,8 +347,8 @@ export const SerialLinkPanel: React.FC<SerialLinkPanelProps> = ({
             </div>
           </div>
 
-          {/* Live Serial Telemetry Counters */}
-          <div className="grid grid-cols-4 gap-1 px-2 py-1 bg-[var(--bg-base)] border border-[var(--border-subtle)] rounded-[var(--radius-xs)] text-[9px] font-mono-data">
+          {/* Live Serial Telemetry & Telecommand Counters */}
+          <div className="grid grid-cols-5 gap-1 px-2 py-1 bg-[var(--bg-base)] border border-[var(--border-subtle)] rounded-[var(--radius-xs)] text-[9px] font-mono-data">
             <div title="Valid Parsed Telemetry Packets">
               <span className="text-[var(--text-tertiary)] block">VALID</span>
               <span className="text-[var(--status-nominal)] font-bold tabular-nums">
@@ -367,6 +367,12 @@ export const SerialLinkPanel: React.FC<SerialLinkPanelProps> = ({
                 {serialMetrics.malformedPacketsReceived}
               </span>
             </div>
+            <div title="Telecommands Transmitted">
+              <span className="text-[var(--text-tertiary)] block">TX CMD</span>
+              <span className="text-[var(--action-amber)] font-bold tabular-nums">
+                {serialMetrics.commandsSent ?? 0}
+              </span>
+            </div>
             <div title="Complete Lines Received">
               <span className="text-[var(--text-tertiary)] block">LINES</span>
               <span className="text-[var(--text-primary)] font-semibold tabular-nums">
@@ -383,7 +389,7 @@ export const SerialLinkPanel: React.FC<SerialLinkPanelProps> = ({
 
           {/* FSW Wire Contract Note */}
           <div className="px-2 py-1 bg-[var(--bg-base)] border border-[var(--border-subtle)] rounded-[var(--radius-xs)] text-[9px] font-mono-data text-[var(--text-tertiary)] leading-tight">
-            FSW Contract: 24-field <span className="text-[var(--text-secondary)]">KEY=VALUE</span> @ 1Hz (115200 8N1; awaits <span className="text-[var(--text-secondary)]">START</span> on LoRa; <span className="text-[var(--text-secondary)]">ACK:</span> logged).
+            FSW Contract: 18-Field Extended / 15-Field Competition CSV (MS5611 + MPU6050 + NEO-M9N) @ 1Hz. Bidirectional Uplink enabled (START / STOP / TARE / CAL).
           </div>
         </>
       )}

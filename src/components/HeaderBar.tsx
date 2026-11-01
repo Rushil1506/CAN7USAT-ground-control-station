@@ -407,14 +407,14 @@ export const HeaderBar: React.FC<HeaderBarProps> = ({
             </button>
           )}
 
-          {/* Live Serial: static receive-only indicator (informational, not a control) */}
+          {/* Live Serial: Bidirectional Link Badge */}
           {!isSim && (
             <span
-              className="hidden 2xl:flex items-center gap-1.5 text-[11px] font-semibold px-2 xl:px-2.5 py-1 bg-[var(--bg-surface-2)] text-[var(--text-secondary)] border border-[var(--border-subtle)] rounded-[var(--radius-sm)] shrink-0 whitespace-nowrap"
-              title="Live Serial is strictly receive-only: no hardware telecommands are sent"
+              className="hidden 2xl:flex items-center gap-1.5 text-[11px] font-semibold px-2 xl:px-2.5 py-1 bg-[var(--status-nominal-bg)] text-[var(--status-nominal)] border border-[var(--status-nominal)]/40 rounded-[var(--radius-sm)] shrink-0 whitespace-nowrap"
+              title="Bidirectional serial communication active: Uplink commands enabled & Downlink telemetry decoding"
             >
-              <Rocket className="w-3.5 h-3.5 shrink-0" />
-              <span className="whitespace-nowrap">RX ONLY</span>
+              <Radio className="w-3.5 h-3.5 shrink-0" />
+              <span className="whitespace-nowrap">BIDIRECTIONAL (RX/TX)</span>
             </span>
           )}
           {/* Raw Frame Drawer Toggle */}

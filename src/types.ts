@@ -54,6 +54,7 @@ export interface SerialMetrics {
   completeLinesReceived: number;
   validPacketsReceived: number;
   malformedPacketsReceived: number;
+  commandsSent?: number;
   connectionErrors: number;
   lastValidPacketTimeMs: number | null;
   lastValidPacketRxTime?: string | null; // Computer packet-reception time-of-day (UTC), separate from GNSS time
@@ -129,7 +130,7 @@ export interface TelemetryPacket {
   stateCode: FlightStateCode | null;
   fswStateName: string;
   fswStateIndex?: number | null;    // 0..9 enum index in CAN7USAT_FSW nav_types.h (null if unmapped/legacy)
-  packetFormat?: 'FSW_KV_32' | 'FSW_CSV_32' | 'FSW_KV_24' | 'FSW_CSV_24' | 'LEGACY_CSV_19' | 'SIMULATION';
+  packetFormat?: 'FSW_KV_32' | 'FSW_CSV_32' | 'FSW_KV_24' | 'FSW_CSV_24' | 'LEGACY_CSV_19' | 'COMPETITION_CSV_15' | 'EXTENDED_CSV_18' | 'SIMULATION';
   l1Connected: boolean;             // Primary LoRa link
   l2Connected: boolean | null;      // Backup link
   deployed: boolean | null;         // Simulator-only deployment flag; not transmitted by live hardware (always null in live)

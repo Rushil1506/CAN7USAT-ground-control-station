@@ -38,9 +38,9 @@ export const FIELD_READINESS_ITEMS: FieldReadinessCheck[] = [
   },
   {
     id: 'offline_maps',
-    title: 'Autonomous Offline Map Packs Verified',
+    title: 'Autonomous Local GPS Navigation Verified',
     requirement:
-      'Kushinagar and Tamkuhi Raj regional map packs verified in browser IndexedDB & local MBTiles server with zero internet reliance.',
+      'Field navigation and real-time GPS coordinate vector tracking verified with zero internet reliance.',
     sectionRef: 'IN-SPACe Section 6.1.xii',
   },
   {
@@ -184,7 +184,7 @@ export function evaluatePreflightChecklist(
     {
       id: 4,
       title: 'Onboard MicroSD Card Data Logging',
-      requirement: 'Teensy 4.1 microSD slot mounted and writable for flight backup',
+      requirement: 'Arduino Mega 2560 SPI MicroSD module (CS=53/10) mounted and writable for flight backup',
       status: isSim
         ? 'MOUNTED (SIMULATED)'
         : checkedItems[4]
@@ -210,7 +210,7 @@ export function evaluatePreflightChecklist(
       id: 6,
       title: 'Z-Axis Momentum Bias Wheel Assembly',
       requirement:
-        'MT2204 2300KV motor & 63.4g brass flywheel spin test (12,000 RPM)',
+        'MT2204 2300KV motor & 63.4g brass flywheel spin test (6,000 RPM commanded)',
       status: wheelStatusText,
       pass: isSim ? true : hasWheelTelemetry || Boolean(checkedItems[6]),
       isManualInLive: !hasWheelTelemetry,

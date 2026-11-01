@@ -53,7 +53,7 @@ export const OPTIONAL_TELEMETRY_FIELDS: OptionalFieldDescriptor[] = [
     packetField: 'batteryVoltage',
     label: '2S Battery Voltage',
     hardwareName: 'Resistor Voltage Divider',
-    busInterface: 'Teensy ADC (A10 / Pin 24)',
+    busInterface: 'Arduino Mega ADC (A0 Divider)',
     unit: 'V',
     description: 'Analog telemetry of 2S Li-ion pack (6.4V cutoff to 8.4V nominal). Strictly optional in live mode.',
     flatSatStatus: 'OPTIONAL',

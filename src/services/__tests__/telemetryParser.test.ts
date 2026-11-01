@@ -780,4 +780,96 @@ describe('flight-software-integrated/CAN7USAT_FSW.ino 32-Field v2 Continuous-Rot
   });
 });
 
+describe('CAN7USAT_UNO.ino 15-Field Competition & 18-Field Extended Attitude Contract', () => {
+  const SAMPLE_EXTENDED_18 =
+    '2026-IN-SPACe-CAN-7USAT-017,142,142,654.20,93740.50,21.50,8.12,12:09:37,13.3485000,74.7925000,695.50,11,9.81,6000.0,PRECISION_GUIDE,-2.5,4.0,185.2';
+
+  const SAMPLE_COMPETITION_15_TRAILING =
+    '2026-IN-SPACe-CAN-7USAT-017,12,12,0.15,101325.00,24.50,8.20,00:00:00,13.3485000,74.7925000,45.20,8,9.80,0.0,LAUNCH_PAD,';
+
+  it('parses authoritative 18-field extended packet with correct Pitch, Roll, Yaw mapping', () => {
+    const res = parseTelemetryLine(SAMPLE_EXTENDED_18);
+    assert.equal(res.ok, true);
+    if (!res.ok) return;
+
+    assert.strictEqual(res.packet.packetFormat, 'EXTENDED_CSV_18');
+    assert.strictEqual(res.packet.teamId, '2026-IN-SPACe-CAN-7USAT-017');
+    assert.strictEqual(res.packet.missionTimeSeconds, 142);
+    assert.strictEqual(res.packet.packetNumber, 142);
+    assert.strictEqual(res.packet.altitude, 654.2);
+    assert.strictEqual(res.packet.rawPressurePa, 93740.5);
+    assert.strictEqual(res.packet.pressure, 937.405);
+    assert.strictEqual(res.packet.temperature, 21.5);
+    assert.strictEqual(res.packet.batteryVoltage, 8.12);
+    assert.strictEqual(res.packet.timestampUtc, '12:09:37');
+    assert.strictEqual(res.packet.latitude, 13.3485);
+    assert.strictEqual(res.packet.longitude, 74.7925);
+    assert.strictEqual(res.packet.gpsAltitude, 695.5);
+    assert.strictEqual(res.packet.gpsSats, 11);
+    assert.strictEqual(res.packet.acceleration, 9.81);
+    assert.strictEqual(res.packet.wheelRpm, 6000);
+    assert.strictEqual(res.packet.spinRate, 6000);
+    assert.strictEqual(res.packet.fswStateName, 'PRECISION_GUIDE');
+    assert.strictEqual(res.packet.stateCode, FlightStateCode.PRECISION_GUIDANCE);
+
+    // CRITICAL: Verify Field 15 is Pitch and Field 16 is Roll as serialized by CAN7USAT_UNO.ino
+    assert.strictEqual(res.packet.pitch, -2.5);
+    assert.strictEqual(res.packet.roll, 4.0);
+    assert.strictEqual(res.packet.yaw, 185.2);
+  });
+
+  it('parses official 15-field competition packet from SD log with trailing comma', () => {
+    const res = parseTelemetryLine(SAMPLE_COMPETITION_15_TRAILING);
+    assert.equal(res.ok, true);
+    if (!res.ok) return;
+
+    assert.strictEqual(res.packet.packetFormat, 'COMPETITION_CSV_15');
+    assert.strictEqual(res.packet.teamId, '2026-IN-SPACe-CAN-7USAT-017');
+    assert.strictEqual(res.packet.missionTimeSeconds, 12);
+    assert.strictEqual(res.packet.packetNumber, 12);
+    assert.strictEqual(res.packet.altitude, 0.15);
+    assert.strictEqual(res.packet.acceleration, 9.8);
+    assert.strictEqual(res.packet.wheelRpm, 0);
+    assert.strictEqual(res.packet.fswStateName, 'LAUNCH_PAD');
+    assert.strictEqual(res.packet.stateCode, FlightStateCode.LAUNCH_PAD);
+    // Attitude angles not present in 15-field packet must be null
+    assert.strictEqual(res.packet.pitch, null);
+    assert.strictEqual(res.packet.roll, null);
+    assert.strictEqual(res.packet.yaw, null);
+  });
+
+  it('accepts short team ID formats (017, CAN-7USAT-017)', () => {
+    const shortLine = SAMPLE_EXTENDED_18.replace('2026-IN-SPACe-CAN-7USAT-017', '017');
+    const res = parseTelemetryLine(shortLine);
+    assert.equal(res.ok, true);
+    if (!res.ok) return;
+    assert.strictEqual(res.packet.teamId, '017');
+  });
+
+  it('parses telecommand telemetry START and STOP ACKs', () => {
+    const ackOn = parseFirmwareControlLine('ACK:CX=ON');
+    assert.ok(ackOn !== null);
+    assert.strictEqual(ackOn?.kind, 'ACK');
+    assert.strictEqual(ackOn?.category, 'CX');
+    assert.strictEqual(ackOn?.payload, 'CX=ON');
+
+    const ackOff = parseFirmwareControlLine('ACK:CX=OFF');
+    assert.ok(ackOff !== null);
+    assert.strictEqual(ackOff?.kind, 'ACK');
+    assert.strictEqual(ackOff?.category, 'CX');
+    assert.strictEqual(ackOff?.payload, 'CX=OFF');
+  });
+
+  it('parses calibration, tare heading, and vbat reset ACKs', () => {
+    const calAck = parseFirmwareControlLine('ACK:CALIB=SAVED_EEPROM');
+    assert.strictEqual(calAck?.category, 'CALIB');
+
+    const tareAck = parseFirmwareControlLine('ACK:TARE_HDG=0.0,OFFSET=45.2');
+    assert.strictEqual(tareAck?.category, 'TARE_HDG');
+
+    const vbatAck = parseFirmwareControlLine('ACK:VBAT_RESET=8.20');
+    assert.strictEqual(vbatAck?.category, 'VBAT_RESET');
+  });
+});
+
 

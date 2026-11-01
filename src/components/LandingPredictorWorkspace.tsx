@@ -21,8 +21,6 @@ import {
   ZoomOut,
 } from 'lucide-react';
 import { BASE_GPS } from '../constants';
-import { createOfflineTileLayer } from '../services/offlineTileLayer';
-import { getOfflineStorage } from '../services/offlineMapService';
 import {
   AltitudeSourceMode,
   DEFAULT_PREDICTOR_CONFIG,
@@ -195,15 +193,7 @@ export const LandingPredictorWorkspace: React.FC<LandingPredictorWorkspaceProps>
     config.target_lon_deg !== null ? config.target_lon_deg.toFixed(6) : ''
   );
   const [targetError, setTargetError] = useState<string | null>(null);
-  const [forceOfflineMode, setForceOfflineMode] = useState<boolean>(false);
   const [currentZoom, setCurrentZoom] = useState<number>(16);
-
-  useEffect(() => {
-    getOfflineStorage()
-      .getSettings()
-      .then((s) => setForceOfflineMode(s.forceOffline))
-      .catch(() => {});
-  }, []);
 
   // Keep input fields synchronized when shared target is updated from Overview or map click
   useEffect(() => {
@@ -318,13 +308,11 @@ export const LandingPredictorWorkspace: React.FC<LandingPredictorWorkspaceProps>
       map.removeLayer(tileLayerRef.current);
       tileLayerRef.current = null;
     }
-    const layer = createOfflineTileLayer(tileUrls[mapType], {
+    const layer = L.tileLayer(tileUrls[mapType], {
       maxZoom: 19,
-      maxNativeZoom: 15,
+      maxNativeZoom: 19,
       subdomains: 'abcd',
       attribution: tileAttributions[mapType],
-      forceOffline: forceOfflineMode,
-      isDark: mapType === 'dark',
     }).addTo(map);
     tileLayerRef.current = layer;
 
@@ -334,7 +322,7 @@ export const LandingPredictorWorkspace: React.FC<LandingPredictorWorkspaceProps>
         tileLayerRef.current = null;
       }
     };
-  }, [mapType, forceOfflineMode]);
+  }, [mapType]);
 
   // Synchronize Map Markers, Flight Track, and Strictly Gated Predicted Landing Overlay
   useEffect(() => {

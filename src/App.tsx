@@ -472,28 +472,48 @@ export default function App() {
     });
   };
 
-  const handleSendCommand = (cmd: string) => {
-    // Strictly block command transmission or fake ACKs in LIVE_SERIAL mode
-    if (telemetrySource !== 'SIMULATION') {
-      addLog(
-        '[SECURITY] Command transmission blocked: Live Serial mode is strictly receive-only.',
-        'err',
-        'LIVE_SERIAL'
-      );
-      return;
+  const handleSendCommand = async (cmd: string) => {
+    const trimmed = cmd.trim();
+    if (!trimmed) return;
+
+    if (telemetrySource === 'LIVE_SERIAL') {
+      addLog(trimmed, 'tx', 'LIVE_SERIAL');
+      setSerialConfig((prev) => ({ ...prev, txCount: prev.txCount + 1 }));
+
+      const sent = await globalSerialTelemetry.sendCommand(trimmed);
+      if (!sent) {
+        addLog(
+          `[UPLINK_ERR] Failed to transmit command '${trimmed}': WebSerial port is not connected or output stream is locked.`,
+          'err',
+          'LIVE_SERIAL'
+        );
+      }
+    } else {
+      // Simulation mode
+      addLog(trimmed, 'tx', 'SIMULATION');
+      setSerialConfig((prev) => ({ ...prev, txCount: prev.txCount + 1 }));
+      setTimeout(() => {
+        if (telemetrySourceRef.current !== 'SIMULATION') return;
+        const upper = trimmed.toUpperCase();
+        if (upper === 'START' || upper === '+' || upper === 'ON') {
+          addLog('[FSW_ACK:CX] ACK:CX=ON', 'rx', 'SIMULATION');
+        } else if (upper === 'STOP' || upper === '-' || upper === 'OFF') {
+          addLog('[FSW_ACK:CX] ACK:CX=OFF', 'rx', 'SIMULATION');
+        } else if (upper.startsWith('CAL')) {
+          addLog('[FSW_ACK:CALIB] ACK:CALIB=SAVED_EEPROM', 'rx', 'SIMULATION');
+        } else if (upper.startsWith('TARE') || upper === 'ZERO' || upper === 'Z') {
+          addLog('[FSW_ACK:TARE_HDG] ACK:TARE_HDG=0.0,OFFSET=0.0', 'rx', 'SIMULATION');
+        } else {
+          addLog(
+            `[SIM_ACK] (${TEAM_INFO.id}) Command '${
+              trimmed.split(',')[2] || trimmed
+            }' processed by local simulator.`,
+            'rx',
+            'SIMULATION'
+          );
+        }
+      }, 350);
     }
-    addLog(cmd, 'tx', 'SIMULATION');
-    setSerialConfig((prev) => ({ ...prev, txCount: prev.txCount + 1 }));
-    setTimeout(() => {
-      if (telemetrySourceRef.current !== 'SIMULATION') return;
-      addLog(
-        `[SIM_ACK] (${TEAM_INFO.id}) Command '${
-          cmd.split(',')[2] || cmd
-        }' processed by local simulator (no RF hardware transmission).`,
-        'rx',
-        'SIMULATION'
-      );
-    }, 400);
   };
 
 
@@ -632,8 +652,13 @@ export default function App() {
         optionalTelemetrySettings={optionalTelemetrySettings}
       />
 
-      {/* Main Dashboard Workspace Content Area */}
-      <main className="flex-1 min-h-0 min-w-0 p-2.5 bg-[var(--bg-base)] flex flex-col overflow-hidden">
+      {/* Main Dashboard Workspace & Side-by-Side Docked Desktop Telemetry Console */}
+      <div className="flex-1 min-h-0 min-w-0 flex flex-col lg:flex-row overflow-hidden relative">
+        <main
+          className={`flex-1 min-h-0 min-w-0 p-2.5 bg-[var(--bg-base)] flex flex-col overflow-hidden transition-all duration-150 ${
+            isTerminalOpen ? 'lg:max-w-[55%] xl:max-w-[50%]' : 'w-full'
+          }`}
+        >
         {/* WORKSPACE 1: MISSION OVERVIEW (widgets controlled by local display preferences) */}
         {activeTab === 'OVERVIEW' && (
           <div className="flex flex-col gap-2.5 h-full min-h-0 flex-1 overflow-y-auto lg:overflow-hidden" data-testid="overview-workspace">
@@ -1217,25 +1242,51 @@ export default function App() {
             </div>
           </div>
         )}
-      </main>
+        </main>
+
+        {/* Telemetry Console (Docked Half-Screen on >= lg screens, preventing destructive overlap) */}
+        {isTerminalOpen && (
+          <div className="hidden lg:flex w-full lg:w-[45%] xl:w-[50%] h-full shrink-0 border-l border-[var(--border-subtle)] overflow-hidden">
+            <TerminalDrawer
+              isOpen={true}
+              isDockedDesktop={true}
+              onClose={() => setIsTerminalOpen(false)}
+              telemetrySource={telemetrySource}
+              rawLogEntries={rawLogs}
+              historyPackets={activeHistoryPackets}
+              latestPacket={activeLatestPacket}
+              onSendCommand={handleSendCommand}
+              onClearLogs={() =>
+                setRawLogs((prev) =>
+                  prev.filter((l) => (l.source ?? 'SIMULATION') !== telemetrySource)
+                )
+              }
+            />
+          </div>
+        )}
+      </div>
 
       {/* Persistent Mobile & Tablet Bottom Navigation Bar (< lg) */}
       <MobileWorkspaceNav activeTab={activeTab} setActiveTab={setActiveTab} />
 
-      {/* Terminal Slide-out Drawer */}
-      <TerminalDrawer
-        isOpen={isTerminalOpen}
-        onClose={() => setIsTerminalOpen(false)}
-        telemetrySource={telemetrySource}
-        rawLogEntries={rawLogs}
-        historyPackets={activeHistoryPackets}
-        onSendCommand={handleSendCommand}
-        onClearLogs={() =>
-          setRawLogs((prev) =>
-            prev.filter((l) => (l.source ?? 'SIMULATION') !== telemetrySource)
-          )
-        }
-      />
+      {/* Terminal Slide-out Drawer for Mobile & Tablet (< lg) */}
+      <div className="lg:hidden">
+        <TerminalDrawer
+          isOpen={isTerminalOpen}
+          isDockedDesktop={false}
+          onClose={() => setIsTerminalOpen(false)}
+          telemetrySource={telemetrySource}
+          rawLogEntries={rawLogs}
+          historyPackets={activeHistoryPackets}
+          latestPacket={activeLatestPacket}
+          onSendCommand={handleSendCommand}
+          onClearLogs={() =>
+            setRawLogs((prev) =>
+              prev.filter((l) => (l.source ?? 'SIMULATION') !== telemetrySource)
+            )
+          }
+        />
+      </div>
 
       {/* Ground Station Settings Modal */}
       <SettingsModal

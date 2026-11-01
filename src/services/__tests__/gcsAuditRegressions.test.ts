@@ -1006,7 +1006,7 @@ describe('GCS Audit Regression Suite (Stages A, B, and C)', () => {
 
     const offlineMapsItem = FIELD_READINESS_ITEMS.find((i) => i.id === 'offline_maps')!;
     assert.ok(offlineMapsItem);
-    assert.ok(offlineMapsItem.requirement.includes('IndexedDB'));
+    assert.ok(offlineMapsItem.requirement.includes('zero internet reliance'));
     assert.ok(offlineMapsItem.sectionRef.includes('6.1.xii'));
   });
 
@@ -1213,5 +1213,90 @@ describe('GCS Audit Regression Suite (Stages A, B, and C)', () => {
     assert.ok(panelContent.includes('raw-readout-label'));
     assert.ok(panelContent.includes('raw-readout-value'));
     assert.ok(panelContent.includes('data-testid="raw-readouts-grid"'));
+  });
+
+  it('Stage E: Attitude representation verification - 3-Axis, upright resting, and compound rotation tests', () => {
+    const startZeroRotation = { x: 0, y: 0, z: 0 };
+
+    // 1. Upright resting orientation test (CanSat stands vertically on launch pad / bench)
+    const uprightPacket = makeTelemetryPacket(1, 0, 0, 0, {
+      pitch: 0.0,
+      roll: 0.0,
+      yaw: 0.0,
+    });
+    const uprightState = deriveAttitudeViewportState(uprightPacket, false, false);
+    assert.equal(uprightState.hasAttitudeData, true);
+    assert.equal(uprightState.hasYaw, true);
+    assert.equal(uprightState.pitchDeg, 0);
+    assert.equal(uprightState.rollDeg, 0);
+    assert.equal(uprightState.yawDeg, 0);
+
+    const uprightRot = computeNextMeshRotation(startZeroRotation, uprightState);
+    assert.equal(uprightRot.x, 0, 'Resting upright pitch must be 0 rad');
+    assert.equal(uprightRot.y, 0, 'Resting upright yaw must be 0 rad');
+    assert.equal(uprightRot.z, 0, 'Resting upright roll must be 0 rad');
+
+    // 2. Pure Pitch Tilt tests (+45 deg and -45 deg)
+    const pitchUpPacket = makeTelemetryPacket(2, 100, 5, 2, { pitch: 45.0, roll: 0.0, yaw: 0.0 });
+    const pitchUpState = deriveAttitudeViewportState(pitchUpPacket, false, false);
+    const pitchUpRot = computeNextMeshRotation(startZeroRotation, pitchUpState);
+    assert.ok(Math.abs(pitchUpRot.x - (45 * Math.PI) / 180) < 1e-6);
+    assert.equal(pitchUpRot.y, 0);
+    assert.equal(pitchUpRot.z, 0);
+
+    const pitchDownPacket = makeTelemetryPacket(3, 100, 5, 2, { pitch: -45.0, roll: 0.0, yaw: 0.0 });
+    const pitchDownState = deriveAttitudeViewportState(pitchDownPacket, false, false);
+    const pitchDownRot = computeNextMeshRotation(startZeroRotation, pitchDownState);
+    assert.ok(Math.abs(pitchDownRot.x - (-45 * Math.PI) / 180) < 1e-6);
+    assert.equal(pitchDownRot.y, 0);
+    assert.equal(pitchDownRot.z, 0);
+
+    // 3. Pure Roll Bank tests (+30 deg and -30 deg)
+    const rollRightPacket = makeTelemetryPacket(4, 100, 5, 2, { pitch: 0.0, roll: 30.0, yaw: 0.0 });
+    const rollRightState = deriveAttitudeViewportState(rollRightPacket, false, false);
+    const rollRightRot = computeNextMeshRotation(startZeroRotation, rollRightState);
+    assert.equal(rollRightRot.x, 0);
+    assert.equal(rollRightRot.y, 0);
+    assert.ok(Math.abs(rollRightRot.z - (30 * Math.PI) / 180) < 1e-6);
+
+    const rollLeftPacket = makeTelemetryPacket(5, 100, 5, 2, { pitch: 0.0, roll: -30.0, yaw: 0.0 });
+    const rollLeftState = deriveAttitudeViewportState(rollLeftPacket, false, false);
+    const rollLeftRot = computeNextMeshRotation(startZeroRotation, rollLeftState);
+    assert.equal(rollLeftRot.x, 0);
+    assert.equal(rollLeftRot.y, 0);
+    assert.ok(Math.abs(rollLeftRot.z - (-30 * Math.PI) / 180) < 1e-6);
+
+    // 4. Pure Yaw Azimuth Heading tests (+90 deg and 180 deg)
+    const yawEastPacket = makeTelemetryPacket(6, 100, 5, 2, { pitch: 0.0, roll: 0.0, yaw: 90.0 });
+    const yawEastState = deriveAttitudeViewportState(yawEastPacket, false, false);
+    const yawEastRot = computeNextMeshRotation(startZeroRotation, yawEastState);
+    assert.equal(yawEastRot.x, 0);
+    assert.ok(Math.abs(yawEastRot.y - (90 * Math.PI) / 180) < 1e-6);
+    assert.equal(yawEastRot.z, 0);
+
+    const yawSouthPacket = makeTelemetryPacket(7, 100, 5, 2, { pitch: 0.0, roll: 0.0, yaw: 180.0 });
+    const yawSouthState = deriveAttitudeViewportState(yawSouthPacket, false, false);
+    const yawSouthRot = computeNextMeshRotation(startZeroRotation, yawSouthState);
+    assert.equal(yawSouthRot.x, 0);
+    assert.ok(Math.abs(yawSouthRot.y - Math.PI) < 1e-6);
+    assert.equal(yawSouthRot.z, 0);
+
+    // 5. Compound 3-Axis Rotation test (Pitch = 25 deg, Roll = -15 deg, Yaw = 135 deg)
+    const compoundPacket = makeTelemetryPacket(8, 250, 8, 4, {
+      pitch: 25.0,
+      roll: -15.0,
+      yaw: 135.0,
+    });
+    const compoundState = deriveAttitudeViewportState(compoundPacket, false, false);
+    const compoundRot = computeNextMeshRotation(startZeroRotation, compoundState);
+    assert.ok(Math.abs(compoundRot.x - (25 * Math.PI) / 180) < 1e-6, 'Pitch X rotation match');
+    assert.ok(Math.abs(compoundRot.y - (135 * Math.PI) / 180) < 1e-6, 'Yaw Y rotation match');
+    assert.ok(Math.abs(compoundRot.z - (-15 * Math.PI) / 180) < 1e-6, 'Roll Z rotation match');
+
+    // 6. User Manual Drag lock overrides compound attitude update
+    const userDragState = deriveAttitudeViewportState(compoundPacket, true, true);
+    const frozenRot = { x: 0.5, y: 1.2, z: -0.3 };
+    const dragResult = computeNextMeshRotation(frozenRot, userDragState);
+    assert.deepEqual(dragResult, frozenRot, 'Drag lock must preserve user orbital inspection');
   });
 });

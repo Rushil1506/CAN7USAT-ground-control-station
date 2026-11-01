@@ -1284,52 +1284,50 @@ export const TelemetryChartPanel: React.FC<TelemetryChartPanelProps> = ({
       {activePreset === 'ENVIRONMENTAL' && (
         <div className={gridClass}>
           <SingleGraph
-            title="SCD40 CO₂ Concentration"
-            unit="ppm"
-            currentValue={latestPacket?.co2}
-            dataKey="co2"
+            title="MPU6050 Pitch Attitude"
+            unit="deg"
+            currentValue={latestPacket?.pitch}
+            dataKey="pitch"
             color="#0f766e"
-            icon={<Sparkles className="w-4 h-4 text-[#0f766e]" />}
+            icon={<Compass className="w-4 h-4 text-[#0f766e]" />}
             history={history}
             timeframeSeconds={timeframe}
             telemetrySource={telemetrySource}
           />
 
           <SingleGraph
-            title="SPS30 Particulate PM2.5"
-            unit="µg/m³"
-            currentValue={latestPacket?.pm2_5}
-            dataKey="pm2_5"
+            title="MPU6050 Roll Attitude"
+            unit="deg"
+            currentValue={latestPacket?.roll}
+            dataKey="roll"
             color="#1d4ed8"
-            icon={<Wind className="w-4 h-4 text-[#1d4ed8]" />}
+            icon={<Compass className="w-4 h-4 text-[#1d4ed8]" />}
             history={history}
             timeframeSeconds={timeframe}
             telemetrySource={telemetrySource}
-            isDisabled={optionalTelemetrySettings ? !optionalTelemetrySettings.enableSps30 : false}
           />
 
           {!overviewMode && (
             <>
               <SingleGraph
-                title="LTR390 UV Index"
-                unit="Index"
-                currentValue={latestPacket?.uv}
-                dataKey="uv"
+                title="Attitude Yaw Heading"
+                unit="deg"
+                currentValue={latestPacket?.yaw}
+                dataKey="yaw"
                 color="#b45309"
-                icon={<Sparkles className="w-4 h-4 text-[#b45309]" />}
+                icon={<Compass className="w-4 h-4 text-[#b45309]" />}
                 history={history}
                 timeframeSeconds={timeframe}
                 telemetrySource={telemetrySource}
-                isDisabled={optionalTelemetrySettings ? !optionalTelemetrySettings.enableUv : false}
               />
 
               <SingleGraph
-                title="GY-SHT40 Relative Humidity"
-                unit="%RH"
-                currentValue={latestPacket?.humidity}
-                dataKey="humidity"
+                title="Gyro Spin Rate"
+                unit="deg/s"
+                currentValue={latestPacket?.spinRate}
+                dataKey="spinRate"
                 color="#4338ca"
-                icon={<Wind className="w-4 h-4 text-[#4338ca]" />}
+                icon={<RotateCw className="w-4 h-4 text-[#4338ca]" />}
                 history={history}
                 timeframeSeconds={timeframe}
                 telemetrySource={telemetrySource}

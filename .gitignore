@@ -47,6 +47,8 @@ map_packs/
 *.elf
 *.bin
 *.exe
+flight-software-*/
+flight-software-*.zip
 
 # Generated legacy scripts & temp directories
 server.js

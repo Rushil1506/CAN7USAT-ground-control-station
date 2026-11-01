@@ -5,7 +5,6 @@ import {
   Compass,
   Crosshair,
   ExternalLink,
-  HardDrive,
   MapPin,
   Navigation,
   Radio,
@@ -24,19 +23,15 @@ import {
   isValidCoordinateFix,
   parseAndValidateTargetCoordinates,
 } from '../services/landingPredictorClient';
-import {
-  createOfflineTileLayer,
-  OfflineLeafletTileLayer,
-} from '../services/offlineTileLayer';
-import {
-  getOfflineStorage,
-  isCoordinateInBounds,
-  isPacketGpsValid,
-  OfflineMapPack,
-} from '../services/offlineMapService';
-import { OfflineMapModal } from './OfflineMapModal';
-
-export { isPacketGpsValid };
+export function isPacketGpsValid(
+  p: TelemetryPacket | null | undefined
+): p is TelemetryPacket & { latitude: number; longitude: number } {
+  if (!p) return false;
+  if (p.gpsValid === false || p.gpsFixType === 'NO_FIX') return false;
+  if (typeof p.gpsSats === 'number' && p.gpsSats <= 0) return false;
+  if (typeof p.latitude !== 'number' || typeof p.longitude !== 'number') return false;
+  return isValidCoordinateFix(p.latitude, p.longitude, true);
+}
 
 export interface GpsTrackingMapProps {
   latestPacket: TelemetryPacket | null;
@@ -80,7 +75,6 @@ export const GpsTrackingMap: React.FC<GpsTrackingMapProps> = ({
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<L.Map | null>(null);
   const tileLayerRef = useRef<L.TileLayer | null>(null);
-  const coverageLayersRef = useRef<L.Rectangle[]>([]);
   const canSatMarkerRef = useRef<L.Marker | null>(null);
   const targetMarkerRef = useRef<L.Marker | null>(null);
   const gsMarkerRef = useRef<L.Marker | null>(null);
@@ -92,11 +86,6 @@ export const GpsTrackingMap: React.FC<GpsTrackingMapProps> = ({
   const [followVehicle, setFollowVehicle] = useState<boolean>(true);
   const [mapType, setMapType] = useState<'osm' | 'satellite' | 'dark'>('osm');
   const [showTargetModal, setShowTargetModal] = useState<boolean>(false);
-  const [showOfflineModal, setShowOfflineModal] = useState<boolean>(false);
-  const [forceOfflineMode, setForceOfflineMode] = useState<boolean>(false);
-  const [showCoverageBounds, setShowCoverageBounds] = useState<boolean>(true);
-  const [allOfflinePacks, setAllOfflinePacks] = useState<OfflineMapPack[]>([]);
-  const [readyOfflinePacks, setReadyOfflinePacks] = useState<OfflineMapPack[]>([]);
   const [geoError, setGeoError] = useState<string | null>(null);
   const [currentZoom, setCurrentZoom] = useState<number>(16);
 
@@ -104,17 +93,10 @@ export const GpsTrackingMap: React.FC<GpsTrackingMapProps> = ({
   const [isNetworkOnline, setIsNetworkOnline] = useState<boolean>(
     typeof navigator !== 'undefined' ? navigator.onLine : true
   );
-  const [onlineFailureCount, setOnlineFailureCount] = useState<number>(0);
-  const [hasMissingTilesInView, setHasMissingTilesInView] = useState<boolean>(false);
 
   useEffect(() => {
-    const handleOnline = () => {
-      setIsNetworkOnline(true);
-      setOnlineFailureCount(0);
-    };
-    const handleOffline = () => {
-      setIsNetworkOnline(false);
-    };
+    const handleOnline = () => setIsNetworkOnline(true);
+    const handleOffline = () => setIsNetworkOnline(false);
 
     window.addEventListener('online', handleOnline);
     window.addEventListener('offline', handleOffline);
@@ -125,14 +107,6 @@ export const GpsTrackingMap: React.FC<GpsTrackingMapProps> = ({
     };
   }, []);
 
-  // Effective basemap source mode: ONLINE (live geographic tiles) vs OFFLINE (IndexedDB / local MBTiles)
-  const effectiveSourceMode: 'ONLINE' | 'OFFLINE' = useMemo(() => {
-    if (forceOfflineMode) return 'OFFLINE';
-    if (!isNetworkOnline) return 'OFFLINE';
-    if (onlineFailureCount >= 3) return 'OFFLINE';
-    return 'ONLINE';
-  }, [forceOfflineMode, isNetworkOnline, onlineFailureCount]);
-
   // Preserve last valid GPS fix to display stale position during GPS dropouts
   const [lastKnownGps, setLastKnownGps] = useState<{
     latitude: number;
@@ -142,26 +116,6 @@ export const GpsTrackingMap: React.FC<GpsTrackingMapProps> = ({
     timestampUtc: string;
     receivedAtMs: number;
   } | null>(null);
-
-  const refreshOfflineState = async () => {
-    try {
-      const storage = getOfflineStorage();
-      const [packs, currentSettings] = await Promise.all([
-        storage.listPacks(),
-        storage.getSettings(),
-      ]);
-      setAllOfflinePacks(packs);
-      setReadyOfflinePacks(packs.filter((p) => p.status === 'READY'));
-      setForceOfflineMode(currentSettings.forceOffline);
-      setShowCoverageBounds(currentSettings.showCoverageBounds);
-    } catch {
-      // Ignore load error
-    }
-  };
-
-  useEffect(() => {
-    refreshOfflineState();
-  }, []);
 
   const [internalTargetLat, setInternalTargetLat] = useState<number | null>(null);
   const [internalTargetLon, setInternalTargetLon] = useState<number | null>(null);
@@ -239,66 +193,6 @@ export const GpsTrackingMap: React.FC<GpsTrackingMapProps> = ({
 
   const referenceLat = activeCanSatLat !== null ? activeCanSatLat : gsLat;
   const referenceLon = activeCanSatLon !== null ? activeCanSatLon : gsLon;
-
-  const regionalCoverageInfo = useMemo(() => {
-    const matchingPack = allOfflinePacks.find((p) =>
-      isCoordinateInBounds(referenceLat, referenceLon, p.bounds)
-    );
-
-    if (!matchingPack) {
-      return {
-        hasPack: false,
-        pack: null,
-        status: 'NONE' as const,
-        shortName: 'Outside Packs',
-        badgeText: 'NO PACK',
-        description: 'Outside Offline Packs',
-      };
-    }
-
-    const short = matchingPack.name.split(' ')[0];
-    if (matchingPack.status === 'READY') {
-      return {
-        hasPack: true,
-        pack: matchingPack,
-        status: 'READY' as const,
-        shortName: `${short} Ready`,
-        badgeText: `${short.toUpperCase()} READY`,
-        description: `${short} Ready (${matchingPack.downloadedTiles} tiles)`,
-      };
-    }
-
-    if (matchingPack.status === 'PARTIAL') {
-      return {
-        hasPack: true,
-        pack: matchingPack,
-        status: 'PARTIAL' as const,
-        shortName: `${short} Partial (${matchingPack.downloadedTiles}/${matchingPack.totalTiles})`,
-        badgeText: `${short.toUpperCase()} PARTIAL (${matchingPack.downloadedTiles}/${matchingPack.totalTiles})`,
-        description: `${short} Partial (${matchingPack.downloadedTiles}/${matchingPack.totalTiles} tiles)`,
-      };
-    }
-
-    return {
-      hasPack: true,
-      pack: matchingPack,
-      status: 'NOT_DOWNLOADED' as const,
-      shortName: `${short} Not Downloaded`,
-      badgeText: `${short.toUpperCase()} NOT DOWNLOADED`,
-      description: `${short} Not Downloaded (0/${matchingPack.totalTiles} tiles)`,
-    };
-  }, [referenceLat, referenceLon, allOfflinePacks]);
-
-  const currentCoverageInfo = useMemo(() => {
-    if (activeCanSatLat === null || activeCanSatLon === null) return null;
-    const matching = readyOfflinePacks.filter((p) =>
-      isCoordinateInBounds(activeCanSatLat, activeCanSatLon, p.bounds)
-    );
-    return {
-      isCovered: matching.length > 0,
-      matchingPackNames: matching.map((p) => p.name),
-    };
-  }, [activeCanSatLat, activeCanSatLon, readyOfflinePacks]);
 
   const canSatLat = activeCanSatLat;
   const canSatLon = activeCanSatLon;
@@ -479,8 +373,6 @@ export const GpsTrackingMap: React.FC<GpsTrackingMapProps> = ({
         predictedDriftLineRef.current.remove();
         predictedDriftLineRef.current = null;
       }
-      coverageLayersRef.current.forEach((layer) => layer.remove());
-      coverageLayersRef.current = [];
       map.remove();
       mapRef.current = null;
     };
@@ -493,21 +385,11 @@ export const GpsTrackingMap: React.FC<GpsTrackingMapProps> = ({
       map.removeLayer(tileLayerRef.current);
       tileLayerRef.current = null;
     }
-    setHasMissingTilesInView(false);
-    const layer = createOfflineTileLayer(tileUrls[mapType], {
+    const layer = L.tileLayer(tileUrls[mapType], {
       maxZoom: 19,
-      maxNativeZoom: 15,
+      maxNativeZoom: 19,
       subdomains: 'abcd',
       attribution: tileAttributions[mapType],
-      sourceMode: effectiveSourceMode,
-      forceOffline: forceOfflineMode,
-      isDark: mapType === 'dark',
-      onOnlineTileError: () => {
-        setOnlineFailureCount((c) => c + 1);
-      },
-      onMissingOfflineTile: () => {
-        setHasMissingTilesInView(true);
-      },
     }).addTo(map);
     tileLayerRef.current = layer;
 
@@ -517,34 +399,7 @@ export const GpsTrackingMap: React.FC<GpsTrackingMapProps> = ({
         tileLayerRef.current = null;
       }
     };
-  }, [mapType, effectiveSourceMode, forceOfflineMode]);
-
-  // Render offline coverage bounding rectangles
-  useEffect(() => {
-    const map = mapRef.current;
-    if (!map) return;
-
-    coverageLayersRef.current.forEach((layer) => layer.remove());
-    coverageLayersRef.current = [];
-
-    if (showCoverageBounds && readyOfflinePacks.length > 0) {
-      readyOfflinePacks.forEach((pack) => {
-        const bounds: L.LatLngBoundsExpression = [
-          [pack.bounds[0], pack.bounds[1]],
-          [pack.bounds[2], pack.bounds[3]],
-        ];
-        const rect = L.rectangle(bounds, {
-          color: '#38bdf8',
-          weight: 1.5,
-          dashArray: '5, 5',
-          fillColor: '#38bdf8',
-          fillOpacity: 0.04,
-          interactive: false,
-        }).addTo(map);
-        coverageLayersRef.current.push(rect);
-      });
-    }
-  }, [readyOfflinePacks, showCoverageBounds]);
+  }, [mapType]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -867,30 +722,20 @@ export const GpsTrackingMap: React.FC<GpsTrackingMapProps> = ({
             )}
           </div>
 
-          {/* Explicit Basemap Source Status Pill */}
+          {/* Basemap / Network Status Indicator */}
           <span
             className={`hidden sm:flex px-2 py-0.5 border items-center gap-1.5 rounded-[var(--radius-xs)] font-mono-data text-[10px] font-semibold shrink-0 ${
-              effectiveSourceMode === 'ONLINE'
+              isNetworkOnline
                 ? 'text-[var(--status-nominal)] bg-[var(--status-nominal-bg)] border-[var(--status-nominal)]/30'
-                : forceOfflineMode
-                ? 'text-[var(--status-warning)] bg-[var(--status-warning-bg)] border-[var(--status-warning)]/40'
-                : regionalCoverageInfo.status === 'READY' && !hasMissingTilesInView
-                ? 'text-[var(--accent-teal)] bg-[var(--accent-teal-soft)] border-[var(--accent-teal)]/30'
                 : 'text-[var(--status-warning)] bg-[var(--status-warning-bg)] border-[var(--status-warning)]/40'
             }`}
             title={
-              effectiveSourceMode === 'ONLINE'
+              isNetworkOnline
                 ? `Online Basemap active (${mapType.toUpperCase()}) — real-time web tile requests`
-                : forceOfflineMode
-                ? 'Forced Offline Mode enabled — local storage only'
-                : regionalCoverageInfo.status === 'READY'
-                ? `Offline Basemap active — ${regionalCoverageInfo.pack?.name} (100% tiles ready)`
-                : regionalCoverageInfo.status === 'PARTIAL'
-                ? `Offline Basemap active with PARTIAL COVERAGE — ${regionalCoverageInfo.pack?.name} (${regionalCoverageInfo.pack?.downloadedTiles}/${regionalCoverageInfo.pack?.totalTiles} tiles)`
-                : 'Offline Basemap active — viewing area outside local packs'
+                : 'No internet connection — autonomous local GPS telemetry vectors, trail, and target navigation remain 100% active'
             }
           >
-            {effectiveSourceMode === 'ONLINE' ? (
+            {isNetworkOnline ? (
               <>
                 <span className="w-1.5 h-1.5 rounded-full bg-[var(--status-nominal)] animate-pulse" />
                 <span>ONLINE ({mapType === 'osm' ? 'OSM' : mapType === 'satellite' ? 'ESRI' : 'CARTO'})</span>
@@ -898,29 +743,10 @@ export const GpsTrackingMap: React.FC<GpsTrackingMapProps> = ({
             ) : (
               <>
                 <WifiOff className="w-3 h-3" />
-                <span>
-                  {forceOfflineMode
-                    ? 'OFFLINE (FORCED)'
-                    : regionalCoverageInfo.status === 'READY' && !hasMissingTilesInView
-                    ? `OFFLINE (${regionalCoverageInfo.shortName})`
-                    : regionalCoverageInfo.status === 'PARTIAL' || hasMissingTilesInView
-                    ? `OFFLINE (${regionalCoverageInfo.shortName})`
-                    : 'OFFLINE (NO PACK)'}
-                </span>
+                <span>OFFLINE (VECTOR GPS TRACKING)</span>
               </>
             )}
           </span>
-
-          {/* Offline Maps Manager */}
-          <button
-            type="button"
-            onClick={() => setShowOfflineModal(true)}
-            title="Manage Regional Offline Map Packs (IndexedDB & MBTiles)"
-            className="px-2 py-0.5 border cursor-pointer flex items-center gap-1 rounded-[var(--radius-xs)] font-medium text-[10px] bg-[var(--bg-surface-2)] text-[var(--text-secondary)] border-[var(--border-subtle)] hover:text-[var(--text-primary)] transition-colors"
-          >
-            <HardDrive className="w-3 h-3" />
-            <span className="hidden sm:inline">Packs</span>
-          </button>
 
           {onOpenLandingPredictor && (
             <button
@@ -1021,22 +847,14 @@ export const GpsTrackingMap: React.FC<GpsTrackingMapProps> = ({
         </div>
       )}
 
-      {hasMissingTilesInView && effectiveSourceMode === 'OFFLINE' && (
+      {!isNetworkOnline && (
         <div className="bg-[var(--status-warning-bg)] border-b border-[var(--status-warning)]/40 text-[var(--status-warning)] px-3 py-1 font-mono-data text-[10px] flex items-center justify-between z-10">
           <div className="flex items-center gap-1.5">
             <WifiOff className="w-3.5 h-3.5 text-[var(--status-warning)] shrink-0" />
             <span>
-              OFFLINE NOTICE: Missing tiles detected in current viewport for{' '}
-              {regionalCoverageInfo.pack ? regionalCoverageInfo.pack.name : 'this region'}. Areas outside downloaded pack display tactical missing-tile indicators.
+              OFFLINE NOTICE: No internet connection for online base map tiles. Autonomous local GPS tracking, vehicle markers, flight trails, and target navigation remain fully operational.
             </span>
           </div>
-          <button
-            type="button"
-            onClick={() => setShowOfflineModal(true)}
-            className="underline cursor-pointer font-bold ml-2 shrink-0"
-          >
-            Manage Packs
-          </button>
         </div>
       )}
 
@@ -1103,14 +921,12 @@ export const GpsTrackingMap: React.FC<GpsTrackingMapProps> = ({
               <span>{validTrailPoints.length}</span>
               <span
                 className={`font-mono-data text-[8.5px] px-1 py-0.2 rounded font-semibold ${
-                  effectiveSourceMode === 'ONLINE'
+                  isNetworkOnline
                     ? 'text-[var(--status-nominal)] bg-[var(--status-nominal-bg)]'
-                    : regionalCoverageInfo.status === 'READY' && !hasMissingTilesInView
-                    ? 'text-[var(--accent-teal)] bg-[var(--accent-teal-soft)]'
                     : 'text-[var(--status-warning)] bg-[var(--status-warning-bg)]'
                 }`}
               >
-                · {effectiveSourceMode === 'ONLINE' ? `Online (${mapType.toUpperCase()})` : regionalCoverageInfo.shortName}
+                · {isNetworkOnline ? `Online (${mapType.toUpperCase()})` : 'Offline GPS Vectors'}
               </span>
             </span>
           </div>
@@ -1257,13 +1073,6 @@ export const GpsTrackingMap: React.FC<GpsTrackingMapProps> = ({
         </div>
       )}
 
-      {/* Offline Regional Map Packs Management Modal */}
-      <OfflineMapModal
-        isOpen={showOfflineModal}
-        onClose={() => setShowOfflineModal(false)}
-        onPacksChanged={refreshOfflineState}
-        onToggleForceOffline={(forced) => setForceOfflineMode(forced)}
-      />
     </div>
   );
 };

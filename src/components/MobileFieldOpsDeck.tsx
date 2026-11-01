@@ -37,7 +37,7 @@ import {
   PredictionResponsePayload,
   parseAndValidateTargetCoordinates,
 } from '../services/landingPredictorClient';
-import { isPacketGpsValid } from '../services/offlineMapService';
+import { isPacketGpsValid } from './GpsTrackingMap';
 import { describeWebSerialSupport } from '../services/serialTelemetry';
 
 export interface MobileFieldOpsDeckProps {

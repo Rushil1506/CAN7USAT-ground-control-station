@@ -3,6 +3,18 @@ import { FlightStateCode, TelemetryPacket } from '../types';
 export const LIVE_TELEMETRY_TEAM_ID = '2026-IN-SPACe-CAN-7USAT-017';
 export const DEFAULT_MAX_LINE_LENGTH = 1024;
 
+export function isAcceptedTeamId(teamId: string): boolean {
+  const clean = teamId.trim();
+  return (
+    clean === LIVE_TELEMETRY_TEAM_ID ||
+    clean === '017' ||
+    clean === 'CAN-7USAT-017' ||
+    clean === 'CAN7USAT-017' ||
+    clean === 'TEAM_017' ||
+    clean.endsWith('-017')
+  );
+}
+
 /**
  * Exact 24-field key order serialized by `transmitLoRaTelemetry()` in
  * `flight-software-reference/CAN7USAT_FSW.ino` (lines 601-662).
@@ -89,7 +101,19 @@ export type TelemetryParseResult =
 
 export interface FirmwareControlMessage {
   kind: 'ACK' | 'ERR';
-  category: 'STATE' | 'MODE' | 'STEER' | 'SPOOL' | 'SD' | 'TARGET_GPS' | 'UNKNOWN_CMD' | 'GENERIC';
+  category:
+    | 'STATE'
+    | 'MODE'
+    | 'STEER'
+    | 'SPOOL'
+    | 'SD'
+    | 'TARGET_GPS'
+    | 'CX'
+    | 'CALIB'
+    | 'TARE_HDG'
+    | 'VBAT_RESET'
+    | 'UNKNOWN_CMD'
+    | 'GENERIC';
   rawLine: string;
   payload: string;
   targetLatDeg?: number;
@@ -407,6 +431,18 @@ export function parseFirmwareControlLine(inputLine: string): FirmwareControlMess
     if (payload.startsWith('SD=')) {
       return { kind: 'ACK', category: 'SD', rawLine, payload };
     }
+    if (payload.startsWith('CX=')) {
+      return { kind: 'ACK', category: 'CX', rawLine, payload };
+    }
+    if (payload.startsWith('CALIB=')) {
+      return { kind: 'ACK', category: 'CALIB', rawLine, payload };
+    }
+    if (payload.startsWith('TARE_HDG=')) {
+      return { kind: 'ACK', category: 'TARE_HDG', rawLine, payload };
+    }
+    if (payload.startsWith('VBAT_RESET=')) {
+      return { kind: 'ACK', category: 'VBAT_RESET', rawLine, payload };
+    }
     if (payload.startsWith('TARGET_GPS=')) {
       const rest = payload.slice('TARGET_GPS='.length);
       const parts = rest.split(',');
@@ -505,7 +541,14 @@ export function parseTelemetryLine(
   const isKeyValueFormat = rawFields[0].includes('=');
 
   let values: string[];
-  let packetFormat: 'FSW_KV_32' | 'FSW_CSV_32' | 'FSW_KV_24' | 'FSW_CSV_24' | 'LEGACY_CSV_19';
+  let packetFormat:
+    | 'FSW_KV_32'
+    | 'FSW_CSV_32'
+    | 'FSW_KV_24'
+    | 'FSW_CSV_24'
+    | 'LEGACY_CSV_19'
+    | 'COMPETITION_CSV_15'
+    | 'EXTENDED_CSV_18';
 
   if (isKeyValueFormat) {
     let kvTokens: string[];
@@ -575,6 +618,16 @@ export function parseTelemetryLine(
         rawLine,
       };
     }
+  } else if (rawFields.length === 18 || (rawFields.length === 19 && rawFields[18].trim() === '')) {
+    packetFormat = 'EXTENDED_CSV_18';
+    values = rawFields.slice(0, 18);
+    if (values[0].trim() === 'TEAM_ID') {
+      return {
+        ok: false,
+        error: 'CSV header row ignored',
+        rawLine,
+      };
+    }
   } else if (rawFields.length === 20) {
     if (rawFields[19].trim() !== '') {
       return {
@@ -588,20 +641,30 @@ export function parseTelemetryLine(
   } else if (rawFields.length === 19) {
     packetFormat = 'LEGACY_CSV_19';
     values = rawFields;
+  } else if (rawFields.length === 15 || (rawFields.length === 16 && rawFields[15].trim() === '')) {
+    packetFormat = 'COMPETITION_CSV_15';
+    values = rawFields.slice(0, 15);
+    if (values[0].trim() === 'TEAM_ID') {
+      return {
+        ok: false,
+        error: 'CSV header row ignored',
+        rawLine,
+      };
+    }
   } else {
     return {
       ok: false,
-      error: `Invalid field count: expected 32 (FSW v2), 24 (FSW v1), or 19 (legacy) fields (plus optional trailing comma), got ${rawFields.length}`,
+      error: `Invalid field count: expected 32 (FSW v2), 24 (FSW v1), 19 (legacy), 18 (extended attitude), or 15 (competition) fields (plus optional trailing comma), got ${rawFields.length}`,
       rawLine,
     };
   }
 
   // 0: teamId
   const teamId = values[0].trim();
-  if (teamId !== LIVE_TELEMETRY_TEAM_ID) {
+  if (!isAcceptedTeamId(teamId)) {
     return {
       ok: false,
-      error: `Invalid teamId '${teamId}' (expected '${LIVE_TELEMETRY_TEAM_ID}')`,
+      error: `Invalid teamId '${teamId}' (expected '${LIVE_TELEMETRY_TEAM_ID}' or '017')`,
       rawLine,
     };
   }
@@ -650,26 +713,14 @@ export function parseTelemetryLine(
   const satsRes = parseStrictNonNegativeInt(values[11], 'gpsSats', 99);
   if (!satsRes.ok) return { ok: false, error: satsRes.error, rawLine };
 
-  // 12, 13, 14: ACCEL_X_MPS2, ACCEL_Y_MPS2, ACCEL_Z_MPS2
-  const accelXRes = parseStrictFloat(values[12], 'accelX', -500, 500);
-  if (!accelXRes.ok) return { ok: false, error: accelXRes.error, rawLine };
-
-  const accelYRes = parseStrictFloat(values[13], 'accelY', -500, 500);
-  if (!accelYRes.ok) return { ok: false, error: accelYRes.error, rawLine };
-
-  const accelZRes = parseStrictFloat(values[14], 'accelZ', -500, 500);
-  if (!accelZRes.ok) return { ok: false, error: accelZRes.error, rawLine };
-
-  // 15, 16: ROLL_DEG, PITCH_DEG (degrees)
-  const rollRes = parseStrictFloat(values[15], 'roll', -360, 360);
-  if (!rollRes.ok) return { ok: false, error: rollRes.error, rawLine };
-
-  const pitchRes = parseStrictFloat(values[16], 'pitch', -360, 360);
-  if (!pitchRes.ok) return { ok: false, error: pitchRes.error, rawLine };
-
-  // 17: GYRO_Z_RADPS / spinRate (preserved without silent rescaling)
-  const spinRateRes = parseStrictFloat(values[17], 'spinRate', -10000, 10000);
-  if (!spinRateRes.ok) return { ok: false, error: spinRateRes.error, rawLine };
+  let accelXVal: number | null = null;
+  let accelYVal: number | null = null;
+  let accelZVal: number | null = null;
+  let totalAccelVal: number | null = null;
+  let rollVal: number | null = null;
+  let pitchVal: number | null = null;
+  let yawVal: number | null = null;
+  let spinRateVal: number | null = null;
 
   let leftServoDeg: number | null = null;
   let rightServoDeg: number | null = null;
@@ -688,6 +739,70 @@ export function parseTelemetryLine(
   let actuatorCalStatus: 'CALIBRATED' | 'UNCAL_LOCKED' | null = null;
   let actuatorFault: string | null = null;
   let fswStateRaw: string;
+
+  if (packetFormat === 'COMPETITION_CSV_15' || packetFormat === 'EXTENDED_CSV_18') {
+    // 12: TOTAL_ACCEL (Total Acceleration magnitude in m/s^2)
+    const totalAccelRes = parseStrictFloat(values[12], 'totalAccel', 0, 500);
+    if (!totalAccelRes.ok) return { ok: false, error: totalAccelRes.error, rawLine };
+    totalAccelVal = totalAccelRes.value;
+
+    // 13: FLYWHEEL_RPM / GYRO_SPIN_RATE
+    const wheelRpmFloatRes = parseStrictFloat(values[13], 'flywheelRpm', 0, 100_000);
+    if (!wheelRpmFloatRes.ok) return { ok: false, error: wheelRpmFloatRes.error, rawLine };
+    wheelRpm = Math.round(wheelRpmFloatRes.value);
+    spinRateVal = wheelRpmFloatRes.value;
+
+    // 14: FLIGHT_SOFTWARE_STATE
+    fswStateRaw = values[14];
+
+    // Optional 15, 16, 17 in EXTENDED_CSV_18:
+    // AUTHORITATIVE FIRMWARE ORDER (CAN7USAT_UNO.ino lines 1162-1164):
+    // Line 1162: printCommaFloat(pDeg, 1) -> 15 is PITCH
+    // Line 1163: printCommaFloat(rDeg, 1) -> 16 is ROLL
+    // Line 1164: printCommaFloat(yDeg, 1) -> 17 is YAW
+    if (packetFormat === 'EXTENDED_CSV_18') {
+      const pitchRes = parseStrictFloat(values[15], 'pitch', -360, 360);
+      if (!pitchRes.ok) return { ok: false, error: pitchRes.error, rawLine };
+      pitchVal = pitchRes.value;
+
+      const rollRes = parseStrictFloat(values[16], 'roll', -360, 360);
+      if (!rollRes.ok) return { ok: false, error: rollRes.error, rawLine };
+      rollVal = rollRes.value;
+
+      const yawRes = parseStrictFloat(values[17], 'yaw', -360, 360);
+      if (!yawRes.ok) return { ok: false, error: yawRes.error, rawLine };
+      yawVal = yawRes.value;
+    }
+  } else {
+    // 12, 13, 14: ACCEL_X_MPS2, ACCEL_Y_MPS2, ACCEL_Z_MPS2
+    const accelXRes = parseStrictFloat(values[12], 'accelX', -500, 500);
+    if (!accelXRes.ok) return { ok: false, error: accelXRes.error, rawLine };
+    accelXVal = accelXRes.value;
+
+    const accelYRes = parseStrictFloat(values[13], 'accelY', -500, 500);
+    if (!accelYRes.ok) return { ok: false, error: accelYRes.error, rawLine };
+    accelYVal = accelYRes.value;
+
+    const accelZRes = parseStrictFloat(values[14], 'accelZ', -500, 500);
+    if (!accelZRes.ok) return { ok: false, error: accelZRes.error, rawLine };
+    accelZVal = accelZRes.value;
+
+    // In legacy 19/24/32 formats, scalar total acceleration is not a dedicated field
+    totalAccelVal = null;
+
+    // 15, 16: ROLL_DEG, PITCH_DEG (degrees)
+    const rollRes = parseStrictFloat(values[15], 'roll', -360, 360);
+    if (!rollRes.ok) return { ok: false, error: rollRes.error, rawLine };
+    rollVal = rollRes.value;
+
+    const pitchRes = parseStrictFloat(values[16], 'pitch', -360, 360);
+    if (!pitchRes.ok) return { ok: false, error: pitchRes.error, rawLine };
+    pitchVal = pitchRes.value;
+
+    // 17: GYRO_Z_RADPS / spinRate (preserved without silent rescaling)
+    const spinRateRes = parseStrictFloat(values[17], 'spinRate', -10000, 10000);
+    if (!spinRateRes.ok) return { ok: false, error: spinRateRes.error, rawLine };
+    spinRateVal = spinRateRes.value;
 
   if (packetFormat === 'FSW_KV_32' || packetFormat === 'FSW_CSV_32') {
     // 18: LEFT_BRAKE_CMD (0.000..1.000)
@@ -802,6 +917,7 @@ export function parseTelemetryLine(
     // 18: flight software state (19-field legacy CSV)
     fswStateRaw = values[18];
   }
+}
 
   const fswStateName = fswStateRaw.trim();
   if (!STRICT_FSW_STATE_REGEX.test(fswStateName)) {
@@ -852,13 +968,15 @@ export function parseTelemetryLine(
     rawGpsAltitude: gpsAltRes.value,
 
     // IMU & Orientation fields
-    accelX: accelXRes.value,
-    accelY: accelYRes.value,
-    accelZ: accelZRes.value,
-    roll: rollRes.value,
-    pitch: pitchRes.value,
-    spinRate: spinRateRes.value,
-    gyroZRadps: spinRateRes.value,
+    accelX: accelXVal,
+    accelY: accelYVal,
+    accelZ: accelZVal,
+    acceleration: totalAccelVal,
+    roll: rollVal,
+    pitch: pitchVal,
+    yaw: yawVal,
+    spinRate: spinRateVal,
+    gyroZRadps: spinRateVal,
 
     // Flight software state
     stateCode,
@@ -887,8 +1005,6 @@ export function parseTelemetryLine(
 
     // Absent telemetry fields explicitly set to null (never inferred or replaced with 0)
     velocity: null,
-    acceleration: null,
-    yaw: null,
     co2: null,
     pm2_5: null,
     uv: null,

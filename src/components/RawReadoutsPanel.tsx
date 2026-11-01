@@ -2,11 +2,7 @@ import React from 'react';
 import {
   Activity,
   Compass,
-  Cpu,
   Gauge,
-  Navigation,
-  Thermometer,
-  Wind,
   Zap,
 } from 'lucide-react';
 import { TelemetryPacket, TelemetrySource } from '../types';
@@ -122,13 +118,13 @@ export const RawReadoutsPanel: React.FC<RawReadoutsPanelProps> = ({
           highlight: false,
         },
         {
-          label: 'Baro Pressure (PRESSURE_PA)',
+          label: 'Baro Pressure [Measured] (PRESSURE_PA)',
           value: p ? fmtNum(p.pressure, 2) : 'AWAITING',
           unit: 'hPa',
           highlight: false,
         },
         {
-          label: 'Baro Temp (BARO_TEMP_C)',
+          label: 'Baro Temp [Measured] (BARO_TEMP_C)',
           value: p ? fmtNum(p.temperature, 2) : 'AWAITING',
           unit: '°C',
           highlight: false,
@@ -136,128 +132,69 @@ export const RawReadoutsPanel: React.FC<RawReadoutsPanelProps> = ({
       ],
     },
     {
-      category: 'Orientation & Actuators (BNO055 + FSW)',
+      category: 'Orientation, IMU & Actuators (MPU6050 + FSW)',
       icon: <Compass className="w-3.5 h-3.5 text-[var(--accent-teal)] shrink-0" />,
       items: [
         {
-          label: 'Flywheel (FLYWHEEL_RPM)',
+          label: 'Pitch [Accel-Derived] (PITCH_DEG)',
+          value: p && p.pitch !== null ? `${fmtSigned(p.pitch, 1)}°` : 'AWAITING',
+          unit: 'deg',
+          highlight: false,
+        },
+        {
+          label: 'Roll [Accel-Derived] (ROLL_DEG)',
+          value: p && p.roll !== null ? `${fmtSigned(p.roll, 1)}°` : 'AWAITING',
+          unit: 'deg',
+          highlight: false,
+        },
+        {
+          label: 'Yaw [Gyro Dead-Reckoning] (YAW_DEG)',
+          value: p && p.yaw !== null ? `${p.yaw.toFixed(1)}°` : 'AWAITING',
+          unit: 'deg',
+          highlight: true,
+        },
+        {
+          label: 'Gyro Spin Rate [Measured] (GYRO_SPIN_RATE)',
+          value: p ? fmtNum(p.spinRate, 2) : 'AWAITING',
+          unit: 'deg/s',
+          highlight: true,
+        },
+        {
+          label: 'Flywheel [Commanded ESC] (FLYWHEEL_RPM)',
           value: !showWheelRpm
             ? 'DISABLED'
             : p
-            ? fmtInt(p.wheelRpm)
+            ? `${fmtInt(p.wheelRpm)} (CMD)`
             : 'AWAITING',
           unit: 'RPM',
           highlight: showWheelRpm,
         },
         {
-          label: 'Gyro Z (GYRO_Z_RADPS)',
-          value: p ? fmtNum(p.spinRate, 4) : 'AWAITING',
-          unit: isSim ? 'deg/s' : 'raw (BNO055 Z)',
-          highlight: true,
-        },
-        {
-          label: 'Roll / Pitch (DEG)',
-          value: p
-            ? p.roll !== null && p.pitch !== null
-              ? `${fmtSigned(p.roll, 2)}° / ${fmtSigned(p.pitch, 2)}°`
-              : 'UNAVAILABLE'
-            : 'AWAITING',
-          unit: 'deg',
-          highlight: false,
-        },
-        {
-          label: 'Brake Spool Cmd (L / R)',
+          label: 'Brake Servos [Commanded] (L / R)',
           value: p
             ? typeof p.leftBrakeCmd === 'number' && typeof p.rightBrakeCmd === 'number'
               ? `${(p.leftBrakeCmd * 100).toFixed(0)}% / ${(p.rightBrakeCmd * 100).toFixed(0)}%`
               : typeof p.leftServoDeg === 'number' && typeof p.rightServoDeg === 'number'
-              ? `${p.leftServoDeg.toFixed(1)}° / ${p.rightServoDeg.toFixed(1)}° (v1)`
-              : 'UNAVAILABLE'
+              ? `${p.leftServoDeg.toFixed(1)}° / ${p.rightServoDeg.toFixed(1)}°`
+              : 'STANDBY'
             : 'AWAITING',
-          unit:
-            p && typeof p.leftBrakeCmd === 'number'
-              ? p.actuatorCalStatus === 'UNCAL_LOCKED'
-                ? 'UNCAL LOCKED'
-                : `${p.leftSpoolDir ?? 'STOP'}/${p.rightSpoolDir ?? 'STOP'}`
-              : '',
+          unit: 'Pins 2 & 3',
           highlight: false,
         },
         {
-          label: 'Spool PWM / Est. Pull (Open-Loop)',
-          value: p
-            ? typeof p.leftServoUs === 'number' && typeof p.rightServoUs === 'number'
-              ? `${p.leftServoUs}/${p.rightServoUs}µs • ${
-                  typeof p.leftEstPullMm === 'number' && typeof p.rightEstPullMm === 'number'
-                    ? `${p.leftEstPullMm.toFixed(1)}/${p.rightEstPullMm.toFixed(1)}mm`
-                    : 'UNCAL'
-                }`
-              : 'UNAVAILABLE'
-            : 'AWAITING',
-          unit: p?.actuatorFault && p.actuatorFault !== 'NONE' ? p.actuatorFault : '',
-          highlight: false,
-        },
-        {
-          label: 'Derived Steering Cmd',
-          value: p
-            ? typeof p.derivedSteering === 'number'
-              ? fmtSigned(p.derivedSteering, 3)
-              : 'UNAVAILABLE'
-            : 'AWAITING',
-          unit: '[-1..+1]',
-          highlight: false,
-        },
-        {
-          label: 'Burnwire / Buzzer MOSFET',
+          label: 'MOSFET Triggers [Commanded] (BW / BZ)',
           value: p
             ? typeof p.burnwireActive === 'boolean' && typeof p.buzzerMosfet === 'boolean'
-              ? `BW:${p.burnwireActive ? '1 (ON)' : '0'} / BZ:${p.buzzerMosfet ? '1 (ON)' : '0'}`
-              : 'UNAVAILABLE'
+              ? `BW:${p.burnwireActive ? 'ON' : 'OFF'} | BZ:${p.buzzerMosfet ? 'ON' : 'OFF'}`
+              : 'STANDBY'
             : 'AWAITING',
-          unit: 'GPIO 4/5',
+          unit: 'Pins 4 & 5',
           highlight: Boolean(p?.burnwireActive || p?.buzzerMosfet),
         },
       ],
     },
     {
-      category: 'Environmental Payload (Optional / Sim)',
-      icon: <Wind className="w-3.5 h-3.5 text-[var(--status-nominal)] shrink-0" />,
-      items: [
-        {
-          label: 'CO2 Concentration (SCD40)',
-          value: p ? fmtNum(p.co2, 1) : 'AWAITING',
-          unit: 'ppm',
-          highlight: true,
-        },
-        {
-          label: 'Particulate PM2.5 (SPS30)',
-          value: !optionalTelemetrySettings.enableSps30
-            ? 'DISABLED'
-            : p
-            ? fmtNum(p.pm2_5, 1)
-            : 'AWAITING',
-          unit: 'µg/m³',
-          highlight: optionalTelemetrySettings.enableSps30,
-        },
-        {
-          label: 'UV Index (LTR390)',
-          value: !optionalTelemetrySettings.enableUv
-            ? 'DISABLED'
-            : p
-            ? fmtNum(p.uv, 1)
-            : 'AWAITING',
-          unit: 'UVI',
-          highlight: false,
-        },
-        {
-          label: 'Relative Humidity (SHT40)',
-          value: p ? fmtNum(p.humidity, 1) : 'AWAITING',
-          unit: '%RH',
-          highlight: false,
-        },
-      ],
-    },
-    {
-      category: 'GNSS (u-blox) & 2S Power Subsystem',
+      category: 'GNSS (u-blox NEO-M9N) & 2S Power Subsystem',
       icon: <Zap className="w-3.5 h-3.5 text-[var(--status-warning)] shrink-0" />,
       items: [
         {
@@ -301,7 +238,7 @@ export const RawReadoutsPanel: React.FC<RawReadoutsPanelProps> = ({
           highlight: false,
         },
         {
-          label: '2S Battery (BATTERY_V)',
+          label: '2S Battery [Measured A0] (BATTERY_V)',
           value: !optionalTelemetrySettings.enableBatteryVoltage
             ? 'DISABLED'
             : p

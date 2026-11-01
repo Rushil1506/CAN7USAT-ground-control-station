@@ -235,9 +235,9 @@ export const FLIGHT_STATES: Record<FlightStateCode, FlightStateInfo> = {
 };
 
 export const AVAILABLE_PORTS = [
-  'COM10 (Zeminet LoRa 865.50MHz)',
+  'COM10 (Ra-08H LoRa 865.50MHz)',
   'COM4 (Digi XBee-PRO S2C 2.4GHz)',
-  'ttyUSB0 (Teensy 4.1 USB Serial)',
+  'ttyUSB0 (Arduino Mega 2560 USB Serial / CH340)',
   'SIMULATOR (Flight Engine Loopback)',
 ];
 

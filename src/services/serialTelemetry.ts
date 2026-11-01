@@ -24,6 +24,7 @@ interface SerialOptions {
 
 interface WebSerialPort {
   readonly readable: ReadableStream<Uint8Array> | null;
+  readonly writable: WritableStream<Uint8Array> | null;
   getInfo(): SerialPortInfo;
   open(options: SerialOptions): Promise<void>;
   close(): Promise<void>;
@@ -124,6 +125,7 @@ export class SerialTelemetryService {
     completeLinesReceived: 0,
     validPacketsReceived: 0,
     malformedPacketsReceived: 0,
+    commandsSent: 0,
     connectionErrors: 0,
     lastValidPacketTimeMs: null,
     lastValidPacketRxTime: null,
@@ -248,9 +250,39 @@ export class SerialTelemetryService {
       serial.addEventListener('disconnect', this.handleHardwareDisconnect);
     }
 
-    this.notifyStatus(`Connected to ${this.metrics.portLabel} @ ${baudRate} 8N1 (receive-only).`);
+    this.notifyStatus(`Connected to ${this.metrics.portLabel} @ ${baudRate} 8N1 (bidirectional uplink/downlink).`);
     void this.readLoop();
     return true;
+  }
+
+  /**
+   * Transmits a telecommand string over the connected USB serial port.
+   * Ensures standard CR/LF line termination is appended and encodes as UTF-8.
+   * Safe serialization prevents overlapping writes to the writable stream.
+   */
+  public async sendCommand(cmd: string): Promise<boolean> {
+    if (this.state !== 'CONNECTED' || !this.port || !this.port.writable) {
+      throw new Error('Serial port is not connected or writable stream is unavailable.');
+    }
+
+    const trimmed = cmd.trim();
+    if (!trimmed) {
+      throw new Error('Cannot transmit empty telecommand.');
+    }
+
+    const commandToSend = `${trimmed}\r\n`;
+    const encoder = new TextEncoder();
+    const data = encoder.encode(commandToSend);
+
+    const writer = this.port.writable.getWriter();
+    try {
+      await writer.write(data);
+      this.metrics.commandsSent = (this.metrics.commandsSent ?? 0) + 1;
+      this.notifyStatus();
+      return true;
+    } finally {
+      writer.releaseLock();
+    }
   }
 
   public async disconnect(): Promise<void> {
